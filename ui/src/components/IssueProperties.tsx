@@ -23,7 +23,7 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { User, Hexagon, ArrowUpRight, Tag, Plus, Trash2, GitBranch, FolderOpen, Copy, Check } from "lucide-react";
 import { AgentIcon } from "./AgentIconPicker";
 
-function TruncatedCopyable({ value, icon: Icon }: { value: string; icon: React.ComponentType<{ className?: string }> }) {
+function TruncatedCopyable({ value, displayValue, icon: Icon }: { value: string; displayValue?: string; icon: React.ComponentType<{ className?: string }> }) {
   const [copied, setCopied] = useState(false);
   const timerRef = useRef<ReturnType<typeof setTimeout>>(undefined);
   useEffect(() => () => clearTimeout(timerRef.current), []);
@@ -40,7 +40,7 @@ function TruncatedCopyable({ value, icon: Icon }: { value: string; icon: React.C
     <div className="flex items-start gap-1.5 min-w-0 flex-1">
       <Icon className="h-3.5 w-3.5 text-muted-foreground shrink-0 mt-0.5" />
       <span className="text-sm font-mono min-w-0 break-all">
-        {value}
+        {displayValue ?? value}
       </span>
       <button
         type="button"
@@ -158,7 +158,7 @@ export function IssueProperties({
   onUpdate,
   inline,
 }: IssuePropertiesProps) {
-  const { selectedCompanyId } = useCompany();
+  const { selectedCompanyId, selectedCompany } = useCompany();
   const queryClient = useQueryClient();
   const companyId = issue.companyId ?? selectedCompanyId;
   const [assigneeOpen, setAssigneeOpen] = useState(false);
@@ -749,6 +749,16 @@ export function IssueProperties({
   return (
     <div className="space-y-4">
       <div className="space-y-1">
+        {issue.identifier && (
+          <PropertyRow label="Identifier">
+            <TruncatedCopyable
+              value={`[${issue.identifier}](/${selectedCompany?.issuePrefix ?? ""}/issues/${issue.identifier})`}
+              displayValue={issue.identifier}
+              icon={Hexagon}
+            />
+          </PropertyRow>
+        )}
+
         <PropertyRow label="Status">
           <StatusIcon
             status={issue.status}
