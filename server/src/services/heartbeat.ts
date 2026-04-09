@@ -3322,9 +3322,12 @@ export function heartbeatService(db: Db) {
         });
         if (issueId && outcome === "succeeded") {
           try {
-            const issueComment = buildHeartbeatRunIssueComment(adapterResult.resultJson ?? null);
-            if (issueComment) {
-              await issuesSvc.addComment(issueId, issueComment, { agentId: agent.id, runId: finalizedRun.id });
+            const existingComment = await findRunIssueComment(finalizedRun.id, finalizedRun.companyId, issueId);
+            if (!existingComment) {
+              const issueComment = buildHeartbeatRunIssueComment(adapterResult.resultJson ?? null);
+              if (issueComment) {
+                await issuesSvc.addComment(issueId, issueComment, { agentId: agent.id, runId: finalizedRun.id });
+              }
             }
           } catch (err) {
             await onLog(
