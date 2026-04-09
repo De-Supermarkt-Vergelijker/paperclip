@@ -33,10 +33,10 @@ import { formatDate, cn, projectUrl } from "../lib/utils";
 import { timeAgo } from "../lib/timeAgo";
 import { Separator } from "@/components/ui/separator";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
-import { User, Hexagon, ArrowUpRight, Tag, Plus, GitBranch, FolderOpen, Check, ExternalLink } from "lucide-react";
+import { User, Hexagon, ArrowUpRight, Tag, Plus, GitBranch, FolderOpen, Copy, Check, ExternalLink } from "lucide-react";
 import { AgentIcon } from "./AgentIconPicker";
 
-function TruncatedCopyable({ value, icon: Icon }: { value: string; icon: React.ComponentType<{ className?: string }> }) {
+function TruncatedCopyable({ value, displayValue, icon: Icon }: { value: string; displayValue?: string; icon: React.ComponentType<{ className?: string }> }) {
   const [copied, setCopied] = useState(false);
   const timerRef = useRef<ReturnType<typeof setTimeout>>(undefined);
   useEffect(() => () => clearTimeout(timerRef.current), []);
@@ -52,15 +52,17 @@ function TruncatedCopyable({ value, icon: Icon }: { value: string; icon: React.C
   return (
     <div className="flex items-start gap-1.5 min-w-0 flex-1">
       <Icon className="h-3.5 w-3.5 text-muted-foreground shrink-0 mt-0.5" />
+      <span className="text-sm font-mono min-w-0 break-all">
+        {displayValue ?? value}
+      </span>
       <button
         type="button"
-        className="text-sm font-mono min-w-0 break-all text-left cursor-pointer hover:text-foreground transition-colors"
+        className="shrink-0 p-0.5 rounded hover:bg-accent/50 transition-colors text-muted-foreground hover:text-foreground"
         onClick={handleCopy}
-        title={copied ? "Copied!" : "Click to copy"}
+        title={copied ? "Copied!" : "Copy"}
       >
-        {value}
+        {copied ? <Check className="h-3 w-3 text-green-500" /> : <Copy className="h-3 w-3" />}
       </button>
-      {copied && <Check className="h-3 w-3 text-green-500 shrink-0 mt-0.5" />}
     </div>
   );
 }
@@ -204,7 +206,7 @@ export function IssueProperties({
   onUpdate,
   inline,
 }: IssuePropertiesProps) {
-  const { selectedCompanyId } = useCompany();
+  const { selectedCompanyId, selectedCompany } = useCompany();
   const queryClient = useQueryClient();
   const companyId = issue.companyId ?? selectedCompanyId;
   const [assigneeOpen, setAssigneeOpen] = useState(false);
@@ -1041,6 +1043,16 @@ export function IssueProperties({
   return (
     <div className="space-y-4">
       <div className="space-y-1">
+        {issue.identifier && (
+          <PropertyRow label="Identifier">
+            <TruncatedCopyable
+              value={`[${issue.identifier}](/${selectedCompany?.issuePrefix ?? ""}/issues/${issue.identifier})`}
+              displayValue={issue.identifier}
+              icon={Hexagon}
+            />
+          </PropertyRow>
+        )}
+
         <PropertyRow label="Status">
           <StatusIcon
             status={issue.status}
