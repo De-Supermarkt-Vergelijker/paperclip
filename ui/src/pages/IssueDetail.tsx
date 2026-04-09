@@ -1097,9 +1097,10 @@ export function IssueDetail() {
 
   useEffect(() => {
     const titleLabel = issue?.title ?? issueId ?? "Issue";
+    const identifierPrefix = issue?.identifier ? `${issue.identifier}: ` : "";
     setBreadcrumbs([
       sourceBreadcrumb,
-      { label: hasLiveRuns ? `🔵 ${titleLabel}` : titleLabel },
+      { label: hasLiveRuns ? `🔵 ${identifierPrefix}${titleLabel}` : `${identifierPrefix}${titleLabel}` },
     ]);
   }, [setBreadcrumbs, sourceBreadcrumb, issue, issueId, hasLiveRuns]);
 
@@ -1350,6 +1351,20 @@ export function IssueDetail() {
             onChange={(priority) => updateIssue.mutate({ priority })}
           />
           <span className="text-sm font-mono text-muted-foreground shrink-0">{issue.identifier ?? issue.id.slice(0, 8)}</span>
+          {issue.identifier && (
+            <button
+              onClick={async () => {
+                const prefix = selectedCompany?.issuePrefix ?? "";
+                const link = `[${issue.identifier}](/${prefix}/issues/${issue.identifier})`;
+                await navigator.clipboard.writeText(link);
+                pushToast({ title: "Copied", body: `${issue.identifier} link copied to clipboard`, tone: "success" });
+              }}
+              className="inline-flex items-center text-muted-foreground hover:text-foreground transition-colors shrink-0"
+              title="Copy issue link"
+            >
+              <Copy className="h-3.5 w-3.5" />
+            </button>
+          )}
 
           {hasLiveRuns && (
             <span className="inline-flex items-center gap-1.5 rounded-full bg-cyan-500/10 border border-cyan-500/30 px-2 py-0.5 text-[10px] font-medium text-cyan-600 dark:text-cyan-400 shrink-0">
