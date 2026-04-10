@@ -3753,6 +3753,29 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
 
     const issueId = readNonEmptyString(context.issueId);
     if (issueId) {
+      // Dequeue-time issue-status check: cancel runs for done/cancelled issues.
+      // Uses low-level setRunStatus/setWakeupStatus instead of cancelRunInternal
+      // to avoid deadlock — cancelRunInternal calls startNextQueuedRunForAgent,
+      // which holds the agent start lock that is already held by our caller.
+      const issue = await db
+        .select({ status: issues.status })
+        .from(issues)
+        .where(eq(issues.id, issueId))
+        .then((rows) => rows[0] ?? null);
+      if (issue && (issue.status === "done" || issue.status === "cancelled")) {
+        const reason = `Cancelled because the issue is already ${issue.status}`;
+        await setRunStatus(run.id, "cancelled", {
+          finishedAt: new Date(),
+          error: reason,
+          errorCode: "cancelled",
+        });
+        await setWakeupStatus(run.wakeupRequestId, "cancelled", {
+          finishedAt: new Date(),
+          error: reason,
+        });
+        return null;
+      }
+
       const activePauseHold = await treeControlSvc.getActivePauseHoldGate(run.companyId, issueId);
       const treeHoldInteractionWake = activePauseHold && await isVerifiedIssueTreeControlInteractionWake(db, {
         companyId: run.companyId,
