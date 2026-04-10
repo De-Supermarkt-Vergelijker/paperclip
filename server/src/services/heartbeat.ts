@@ -2658,6 +2658,7 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
     runId: string,
     status: string,
     patch?: Partial<typeof heartbeatRuns.$inferInsert>,
+    options?: { skipEvent?: boolean },
   ) {
     const updated = await db
       .update(heartbeatRuns)
@@ -2666,7 +2667,7 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
       .returning()
       .then((rows) => rows[0] ?? null);
 
-    if (updated) {
+    if (updated && !options?.skipEvent) {
       publishLiveEvent({
         companyId: updated.companyId,
         type: "heartbeat.run.status",
@@ -3768,7 +3769,7 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
           finishedAt: new Date(),
           error: reason,
           errorCode: "cancelled",
-        });
+        }, { skipEvent: true });
         await setWakeupStatus(run.wakeupRequestId, "cancelled", {
           finishedAt: new Date(),
           error: reason,
