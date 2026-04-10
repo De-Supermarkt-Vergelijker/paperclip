@@ -1656,17 +1656,7 @@ export function issueService(db: Db) {
         updatedAt: new Date(),
       };
 
-      const nextAssigneeAgentId =
-        issueData.assigneeAgentId !== undefined ? issueData.assigneeAgentId : existing.assigneeAgentId;
-      const nextAssigneeUserId =
-        issueData.assigneeUserId !== undefined ? issueData.assigneeUserId : existing.assigneeUserId;
-
-      if (nextAssigneeAgentId && nextAssigneeUserId) {
-        throw unprocessable("Issue can only have one assignee");
-      }
-      if (patch.status === "in_progress" && !nextAssigneeAgentId && !nextAssigneeUserId) {
-        throw unprocessable("in_progress issues require an assignee");
-      }
+      // Validate explicitly-supplied assignees before side effects
       if (issueData.assigneeAgentId) {
         await assertAssignableAgent(existing.companyId, issueData.assigneeAgentId);
       }
@@ -1686,6 +1676,27 @@ export function issueService(db: Db) {
       }
 
       applyStatusSideEffects(issueData.status, patch, existing);
+
+      // Post-side-effect validation: guards now see effective values including auto-reassign
+      const effectiveAssigneeAgentId =
+        patch.assigneeAgentId !== undefined ? patch.assigneeAgentId : existing.assigneeAgentId;
+      const effectiveAssigneeUserId =
+        patch.assigneeUserId !== undefined ? patch.assigneeUserId : existing.assigneeUserId;
+
+      if (effectiveAssigneeAgentId && effectiveAssigneeUserId) {
+        throw unprocessable("Issue can only have one assignee");
+      }
+      if (patch.status === "in_progress" && !effectiveAssigneeAgentId && !effectiveAssigneeUserId) {
+        throw unprocessable("in_progress issues require an assignee");
+      }
+      // Validate auto-assigned creator (set by applyStatusSideEffects, not in the request)
+      if (patch.assigneeAgentId && patch.assigneeAgentId !== issueData.assigneeAgentId) {
+        await assertAssignableAgent(existing.companyId, patch.assigneeAgentId);
+      }
+      if (patch.assigneeUserId && patch.assigneeUserId !== issueData.assigneeUserId) {
+        await assertAssignableUser(existing.companyId, patch.assigneeUserId);
+      }
+
       if (issueData.status && issueData.status !== "done") {
         patch.completedAt = null;
       }
