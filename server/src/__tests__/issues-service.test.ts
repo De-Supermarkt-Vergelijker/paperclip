@@ -6,6 +6,7 @@ import {
   activityLog,
   agents,
   companies,
+  companyMemberships,
   createDb,
   executionWorkspaces,
   instanceSettings,
@@ -1320,6 +1321,7 @@ describeEmbeddedPostgres("issueService.update auto-reassign on in_review", () =>
     await db.delete(projectWorkspaces);
     await db.delete(projects);
     await db.delete(agents);
+    await db.delete(companyMemberships);
     await db.delete(instanceSettings);
     await db.delete(companies);
   });
@@ -1392,6 +1394,13 @@ describeEmbeddedPostgres("issueService.update auto-reassign on in_review", () =>
       name: "TestCo",
       issuePrefix: `T${companyId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
       requireBoardApprovalForNewAgents: false,
+    });
+
+    await db.insert(companyMemberships).values({
+      companyId,
+      principalType: "user",
+      principalId: creatorUserId,
+      status: "active",
     });
 
     await db.insert(agents).values({
@@ -1489,5 +1498,99 @@ describeEmbeddedPostgres("issueService.update auto-reassign on in_review", () =>
     });
 
     expect(updated!.assigneeAgentId).toBe(explicitAssigneeAgentId);
+  });
+
+  it("rejects in_review when creator agent is terminated", async () => {
+    const companyId = randomUUID();
+    const creatorAgentId = randomUUID();
+    const assigneeAgentId = randomUUID();
+
+    await db.insert(companies).values({
+      id: companyId,
+      name: "TestCo",
+      issuePrefix: `T${companyId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
+      requireBoardApprovalForNewAgents: false,
+    });
+
+    await db.insert(agents).values([
+      {
+        id: creatorAgentId,
+        companyId,
+        name: "Creator",
+        role: "cto",
+        status: "terminated",
+        adapterType: "codex_local",
+        adapterConfig: {},
+        runtimeConfig: {},
+        permissions: {},
+      },
+      {
+        id: assigneeAgentId,
+        companyId,
+        name: "Worker",
+        role: "engineer",
+        status: "active",
+        adapterType: "codex_local",
+        adapterConfig: {},
+        runtimeConfig: {},
+        permissions: {},
+      },
+    ]);
+
+    const issueId = randomUUID();
+    await db.insert(issues).values({
+      id: issueId,
+      companyId,
+      title: "Test terminated creator agent",
+      status: "in_progress",
+      priority: "medium",
+      assigneeAgentId,
+      createdByAgentId: creatorAgentId,
+    });
+
+    await expect(svc.update(issueId, { status: "in_review" })).rejects.toThrow(
+      /terminated/i,
+    );
+  });
+
+  it("rejects in_review when creator user is not a company member", async () => {
+    const companyId = randomUUID();
+    const creatorUserId = randomUUID();
+    const assigneeAgentId = randomUUID();
+
+    await db.insert(companies).values({
+      id: companyId,
+      name: "TestCo",
+      issuePrefix: `T${companyId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
+      requireBoardApprovalForNewAgents: false,
+    });
+
+    await db.insert(agents).values({
+      id: assigneeAgentId,
+      companyId,
+      name: "Worker",
+      role: "engineer",
+      status: "active",
+      adapterType: "codex_local",
+      adapterConfig: {},
+      runtimeConfig: {},
+      permissions: {},
+    });
+
+    // No companyMembership for creatorUserId — they are not a member
+    const issueId = randomUUID();
+    await db.insert(issues).values({
+      id: issueId,
+      companyId,
+      title: "Test non-member creator user",
+      status: "in_progress",
+      priority: "medium",
+      assigneeAgentId,
+      createdByUserId: creatorUserId,
+    });
+
+    await expect(svc.update(issueId, { status: "in_review" })).rejects.toThrow(
+      /not found/i,
+    );
   });
 });
