@@ -2600,6 +2600,11 @@ export function issueRoutes(
 
         for (const mentionedId of mentionedIds) {
           if (actor.actorType === "agent" && actor.actorId === mentionedId) continue;
+          // issue_comment_mentioned bypasses the issue execution lock,
+          // so it must take priority over assignee/status-change wakes
+          // that would be subject to the lock (and potentially deferred).
+          const existingMentionKey = `${mentionedId}:${issue.id}`;
+          if (wakeups.get(existingMentionKey)?.wakeup.reason === "issue_comment_mentioned") continue;
           addWakeup(mentionedId, {
             source: "automation",
             triggerDetail: "system",
@@ -3577,8 +3582,11 @@ export function issueRoutes(
       }
 
       for (const mentionedId of mentionedIds) {
-        if (wakeups.has(mentionedId)) continue;
         if (actorIsAgent && actor.actorId === mentionedId) continue;
+        // issue_comment_mentioned bypasses the issue execution lock,
+        // so it must take priority over assignee/status-change wakes
+        // that would be subject to the lock (and potentially deferred).
+        if (wakeups.has(mentionedId) && wakeups.get(mentionedId)!.reason === "issue_comment_mentioned") continue;
         wakeups.set(mentionedId, {
           source: "automation",
           triggerDetail: "system",
