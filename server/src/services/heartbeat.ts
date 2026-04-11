@@ -148,6 +148,8 @@ const WAKE_COMMENT_IDS_KEY = "wakeCommentIds";
 const PAPERCLIP_WAKE_PAYLOAD_KEY = "paperclipWake";
 const PAPERCLIP_HARNESS_CHECKOUT_KEY = "paperclipHarnessCheckedOut";
 const DETACHED_PROCESS_ERROR_CODE = "process_detached";
+const PROCESS_DETACHED_TIMEOUT_MS = 15 * 60 * 1000;
+const startLocksByAgent = new Map<string, Promise<void>>();
 const REPO_ONLY_CWD_SENTINEL = "/__paperclip_repo_only__";
 const MANAGED_WORKSPACE_GIT_CLONE_TIMEOUT_MS = 10 * 60 * 1000;
 const MAX_INLINE_WAKE_COMMENTS = 8;
@@ -4491,7 +4493,68 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
               },
             });
           }
+          continue;
         }
+
+        // Already marked as detached — check timeout
+        const detachedSinceMs = run.updatedAt ? new Date(run.updatedAt).getTime() : 0;
+        if (now.getTime() - detachedSinceMs < PROCESS_DETACHED_TIMEOUT_MS) {
+          continue;
+        }
+
+        const elapsedMinutes = Math.round((now.getTime() - detachedSinceMs) / 1000 / 60);
+        logger.warn(
+          { runId: run.id, pid: run.processPid, detachedMinutes: elapsedMinutes },
+          "process_detached timeout reached; sending SIGTERM",
+        );
+
+        try {
+          process.kill(run.processPid, "SIGTERM");
+        } catch {
+          // process may have already exited
+        }
+
+        await new Promise((resolve) => setTimeout(resolve, 5000));
+
+        if (isProcessAlive(run.processPid)) {
+          logger.warn(
+            { runId: run.id, pid: run.processPid },
+            "process still alive after SIGTERM; sending SIGKILL",
+          );
+          try {
+            process.kill(run.processPid, "SIGKILL");
+          } catch {
+            // process may have already exited
+          }
+        }
+
+        const timeoutMessage = `process_detached timeout after ${elapsedMinutes} min; terminated child pid ${run.processPid}`;
+        let finalizedRun = await setRunStatus(run.id, "failed", {
+          error: timeoutMessage,
+          errorCode: "process_detached_timeout",
+          finishedAt: now,
+        });
+        await setWakeupStatus(run.wakeupRequestId, "failed", {
+          finishedAt: now,
+          error: timeoutMessage,
+        });
+        if (!finalizedRun) finalizedRun = await getRun(run.id);
+        if (!finalizedRun) continue;
+
+        await releaseIssueExecutionAndPromote(finalizedRun);
+
+        await appendRunEvent(finalizedRun, await nextRunEventSeq(finalizedRun.id), {
+          eventType: "lifecycle",
+          stream: "system",
+          level: "error",
+          message: timeoutMessage,
+          payload: { processPid: run.processPid },
+        });
+
+        await finalizeAgentStatus(run.agentId, "failed", { runSource: run.invocationSource });
+        await startNextQueuedRunForAgent(run.agentId);
+        runningProcesses.delete(run.id);
+        reaped.push(run.id);
         continue;
       }
 
