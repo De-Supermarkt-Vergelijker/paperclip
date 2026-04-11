@@ -4504,31 +4504,16 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
 
         const elapsedMinutes = Math.round((now.getTime() - detachedSinceMs) / 1000 / 60);
         logger.warn(
-          { runId: run.id, pid: run.processPid, detachedMinutes: elapsedMinutes },
-          "process_detached timeout reached; sending SIGTERM",
+          { runId: run.id, pid: run.processPid, processGroupId: run.processGroupId, detachedMinutes: elapsedMinutes },
+          "process_detached timeout reached; terminating process group",
         );
 
-        try {
-          process.kill(run.processPid, "SIGTERM");
-        } catch {
-          // process may have already exited
-        }
+        await terminateHeartbeatRunProcess({
+          pid: run.processPid,
+          processGroupId: run.processGroupId,
+        });
 
-        await new Promise((resolve) => setTimeout(resolve, 5000));
-
-        if (isProcessAlive(run.processPid)) {
-          logger.warn(
-            { runId: run.id, pid: run.processPid },
-            "process still alive after SIGTERM; sending SIGKILL",
-          );
-          try {
-            process.kill(run.processPid, "SIGKILL");
-          } catch {
-            // process may have already exited
-          }
-        }
-
-        const timeoutMessage = `process_detached timeout after ${elapsedMinutes} min; terminated child pid ${run.processPid}`;
+        const timeoutMessage = `process_detached timeout after ${elapsedMinutes} min; terminated child pid ${run.processPid}${run.processGroupId ? ` (pgid ${run.processGroupId})` : ""}`;
         let finalizedRun = await setRunStatus(run.id, "failed", {
           error: timeoutMessage,
           errorCode: "process_detached_timeout",
@@ -4548,7 +4533,10 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
           stream: "system",
           level: "error",
           message: timeoutMessage,
-          payload: { processPid: run.processPid },
+          payload: {
+            ...(run.processPid ? { processPid: run.processPid } : {}),
+            ...(run.processGroupId ? { processGroupId: run.processGroupId } : {}),
+          },
         });
 
         await finalizeAgentStatus(run.agentId, "failed", { runSource: run.invocationSource });

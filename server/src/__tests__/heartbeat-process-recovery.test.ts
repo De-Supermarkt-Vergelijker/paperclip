@@ -77,9 +77,10 @@ if (!embeddedPostgresSupport.supported) {
   );
 }
 
-function spawnAliveProcess() {
+function spawnAliveProcess(opts?: { detached?: boolean }) {
   return spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], {
     stdio: "ignore",
+    detached: opts?.detached ?? false,
   });
 }
 
@@ -1202,12 +1203,13 @@ describeEmbeddedPostgres("heartbeat orphaned process recovery", () => {
   });
 
   it("reaps a process_detached run after the 15-minute timeout", async () => {
-    const child = spawnAliveProcess();
+    const child = spawnAliveProcess({ detached: true });
     childProcesses.add(child);
     expect(child.pid).toBeTypeOf("number");
 
     const { runId, wakeupRequestId } = await seedRunFixture({
       processPid: child.pid ?? null,
+      processGroupId: child.pid ?? null,
       includeIssue: false,
       runErrorCode: "process_detached",
       runError: `Lost in-memory process handle, but child pid ${child.pid} is still alive`,
