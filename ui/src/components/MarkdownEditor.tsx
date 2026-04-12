@@ -505,6 +505,12 @@ export const MarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>
   const [isDragOver, setIsDragOver] = useState(false);
   const [richEditorError, setRichEditorError] = useState<string | null>(null);
   const dragDepthRef = useRef(0);
+  /**
+   * Track active IME composition so we can defer DOM-mutating work
+   * (mention decoration, value sync via setMarkdown, mention detection)
+   * that would otherwise disrupt Android keyboards and dismiss them.
+   */
+  const isComposingRef = useRef(false);
 
   // Stable ref for imageUploadHandler so plugins don't recreate on every render
   const imageUploadHandlerRef = useRef(imageUploadHandler);
@@ -682,6 +688,10 @@ export const MarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>
 
   useEffect(() => {
     if (editorValue !== latestValueRef.current) {
+      // Defer setMarkdown during active IME composition — programmatic content
+      // replacement disrupts Android keyboards and dismisses them. The deferred
+      // sync is flushed in the compositionend handler above.
+      if (isComposingRef.current) return;
       if (ref.current) {
         // Pair with onChange echo suppression (echoIgnoreMarkdownRef).
         echoIgnoreMarkdownRef.current = editorValue;
@@ -725,8 +735,37 @@ export const MarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>
     }
   }, [mentionOptionByKey]);
 
+  // Track IME composition state. When composition ends, flush any deferred
+  // decoration and value sync work.
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    const onStart = () => { isComposingRef.current = true; };
+    const onEnd = () => {
+      isComposingRef.current = false;
+      // Flush deferred decoration
+      decorateProjectMentions();
+      // If the external value drifted during composition, sync now
+      if (ref.current && valueRef.current !== latestValueRef.current) {
+        echoIgnoreMarkdownRef.current = valueRef.current;
+        ref.current.setMarkdown(valueRef.current);
+        latestValueRef.current = valueRef.current;
+      }
+    };
+    el.addEventListener("compositionstart", onStart);
+    el.addEventListener("compositionend", onEnd);
+    return () => {
+      el.removeEventListener("compositionstart", onStart);
+      el.removeEventListener("compositionend", onEnd);
+    };
+  }, [decorateProjectMentions]);
+
   // Mention detection: listen for selection changes and input events
   const checkMention = useCallback(() => {
+    // Skip mention detection during IME composition — selection changes and
+    // state updates during composition cause React re-renders that can
+    // disrupt Android keyboards.
+    if (isComposingRef.current) return;
     if (!containerRef.current || isSelectionInsideCodeLikeElement(containerRef.current)) {
       mentionStateRef.current = null;
       skillEnterArmedRef.current = false;
@@ -809,6 +848,9 @@ export const MarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>
     if (!editable) return;
     decorateProjectMentions();
     const observer = new MutationObserver(() => {
+      // Skip decoration during IME composition — DOM mutations inside the
+      // contentEditable disrupt Android keyboards.
+      if (isComposingRef.current) return;
       decorateProjectMentions();
     });
     observer.observe(editable, {
@@ -817,7 +859,11 @@ export const MarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>
       characterData: true,
     });
     return () => observer.disconnect();
-  }, [decorateProjectMentions, value]);
+    // Intentionally omit `value` — the observer watches DOM mutations, not React
+    // state. Re-subscribing on every keystroke is wasteful and causes DOM
+    // modifications during IME composition on Android.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [decorateProjectMentions]);
 
   const selectMention = useCallback(
     (option: AutocompleteOption) => {
@@ -959,6 +1005,11 @@ export const MarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>
         className,
       )}
       onKeyDownCapture={(e) => {
+        // Let IME composition events pass through unintercepted — Android
+        // keyboards fire keyDown during composition and intercepting them
+        // disrupts word selection / autocorrect.
+        if (e.nativeEvent.isComposing) return;
+
         // Cmd/Ctrl+Enter to submit
         if (onSubmit && e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
           e.preventDefault();
