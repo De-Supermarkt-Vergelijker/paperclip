@@ -219,15 +219,17 @@ describeEmbeddedPostgres("enqueueWakeup cross-path dedup", () => {
     expect(timerRun!.id).not.toBe(assignmentRun!.id);
   }, 15_000);
 
-  it("cross-path dedup catches a queued run outside the 5s window", async () => {
+  it("cross-path dedup catches a queued run invisible to sameScopeQueuedRun", async () => {
     const { companyId, agentId, issueId } = await seedAgentWithBlockedQueue();
     const heartbeat = heartbeatService(db);
 
-    // Directly insert a queued run with createdAt older than 5 seconds
-    // to simulate a run that the 5s dedup window would miss
+    // Simulate the TOCTOU race: the issue-execution path committed a run
+    // that the activeRuns query missed. We give it an explicit taskKey that
+    // differs from issueId so sameScopeQueuedRun (which compares taskKey)
+    // won't match it, but the cross-path dedup (which checks
+    // contextSnapshot->>'issueId') will.
     const oldRunId = randomUUID();
     const oldWakeupId = randomUUID();
-    const sixSecondsAgo = new Date(Date.now() - 6_000);
     await db.insert(agentWakeupRequests).values({
       id: oldWakeupId,
       companyId,
@@ -247,12 +249,12 @@ describeEmbeddedPostgres("enqueueWakeup cross-path dedup", () => {
       triggerDetail: "system",
       status: "queued",
       wakeupRequestId: oldWakeupId,
-      contextSnapshot: { issueId },
-      createdAt: sixSecondsAgo,
+      contextSnapshot: { issueId, taskKey: `issue-exec-${issueId}` },
     });
 
-    // Mention-wake should coalesce via the cross-path dedup check
-    // (not the 5s window, since the run is older than 5s)
+    // Mention-wake has taskKey = issueId (no explicit taskKey in context).
+    // sameScopeQueuedRun won't match (taskKey mismatch), so the cross-path
+    // dedup is the only guard that prevents a duplicate run.
     const mentionRun = await heartbeat.wakeup(agentId, {
       source: "on_demand",
       triggerDetail: "mention",

@@ -4166,10 +4166,9 @@ export function heartbeatService(db: Db) {
 
     // Cross-path dedup: when a comment-mention bypass wake has an issueId,
     // check for any queued/running run that was created via the issue execution
-    // path. The sameScopeQueuedRun check above uses a cached activeRuns list
-    // and may miss runs committed by a concurrent FOR UPDATE transaction.
-    // The 5s dedup window has a time constraint that may not cover all cases.
-    // This final check queries fresh with no time restriction.
+    // path. Due to a TOCTOU race, the activeRuns query above may execute before
+    // a concurrent FOR UPDATE transaction commits its new run. This fresh query
+    // runs later and can catch runs that were invisible to the earlier read.
     if (issueId) {
       const crossPathRun = await db
         .select()
