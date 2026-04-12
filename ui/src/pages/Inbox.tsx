@@ -644,10 +644,10 @@ export function Inbox() {
 
   const pathSegment = location.pathname.split("/").pop() ?? "mine";
   const tab: InboxTab =
-    pathSegment === "mine" || pathSegment === "recent" || pathSegment === "all" || pathSegment === "unread"
+    pathSegment === "mine" || pathSegment === "recent" || pathSegment === "all" || pathSegment === "unread" || pathSegment === "assigned"
       ? pathSegment
       : "mine";
-  const canArchiveFromTab = isMineInboxTab(tab);
+  const canArchiveFromTab = isMineInboxTab(tab) || tab === "assigned";
   const issueLinkState = useMemo(
     () =>
       createIssueDetailLocationState(
@@ -762,6 +762,18 @@ export function Inbox() {
     enabled: !!selectedCompanyId,
   });
   const {
+    data: assignedToMeRaw = [],
+    isLoading: isAssignedToMeLoading,
+  } = useQuery({
+    queryKey: queryKeys.issues.listAssignedToMe(selectedCompanyId!),
+    queryFn: () =>
+      issuesApi.list(selectedCompanyId!, {
+        assigneeUserId: "me",
+        status: INBOX_MINE_ISSUE_STATUS_FILTER,
+      }),
+    enabled: !!selectedCompanyId,
+  });
+  const {
     data: touchedIssuesRaw = [],
     isLoading: isTouchedIssuesLoading,
   } = useQuery({
@@ -790,6 +802,7 @@ export function Inbox() {
   const currentUserId = session?.user.id ?? session?.session.userId ?? null;
 
   const mineIssues = useMemo(() => getRecentTouchedIssues(mineIssuesRaw), [mineIssuesRaw]);
+  const assignedToMeIssues = useMemo(() => getRecentTouchedIssues(assignedToMeRaw), [assignedToMeRaw]);
   const touchedIssues = useMemo(() => getRecentTouchedIssues(touchedIssuesRaw), [touchedIssuesRaw]);
   const visibleMineIssues = useMemo(
     () => applyIssueFilters(mineIssues, issueFilters, currentUserId, true),
@@ -866,10 +879,11 @@ export function Inbox() {
   const issuesToRender = useMemo(
     () => {
       if (tab === "mine") return visibleMineIssues;
+      if (tab === "assigned") return assignedToMeIssues;
       if (tab === "unread") return unreadTouchedIssues;
       return visibleTouchedIssues;
     },
-    [tab, visibleMineIssues, visibleTouchedIssues, unreadTouchedIssues],
+    [tab, visibleMineIssues, assignedToMeIssues, visibleTouchedIssues, unreadTouchedIssues],
   );
 
   const agentById = useMemo(() => {
@@ -1351,6 +1365,7 @@ export function Inbox() {
   const invalidateInboxIssueQueries = () => {
     if (!selectedCompanyId) return;
     queryClient.invalidateQueries({ queryKey: queryKeys.issues.listMineByMe(selectedCompanyId) });
+    queryClient.invalidateQueries({ queryKey: queryKeys.issues.listAssignedToMe(selectedCompanyId) });
     queryClient.invalidateQueries({ queryKey: queryKeys.issues.listTouchedByMe(selectedCompanyId) });
     queryClient.invalidateQueries({ queryKey: queryKeys.issues.listUnreadTouchedByMe(selectedCompanyId) });
     queryClient.invalidateQueries({ queryKey: queryKeys.sidebarBadges(selectedCompanyId) });
@@ -1777,6 +1792,7 @@ export function Inbox() {
     !isDashboardLoading &&
     !isIssuesLoading &&
     !isMineIssuesLoading &&
+    !isAssignedToMeLoading &&
     !isTouchedIssuesLoading &&
     !isRunsLoading;
 
@@ -1826,6 +1842,10 @@ export function Inbox() {
               {
                 value: "mine",
                 label: "Mine",
+              },
+              {
+                value: "assigned",
+                label: "Assigned to me",
               },
               {
                 value: "recent",
@@ -2026,6 +2046,8 @@ export function Inbox() {
               ? "No inbox items match your search."
               : tab === "mine"
               ? "Inbox zero."
+              : tab === "assigned"
+              ? "No issues assigned to you."
               : tab === "unread"
               ? "No new inbox items."
               : tab === "recent"
