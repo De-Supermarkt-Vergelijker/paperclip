@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { eq } from "drizzle-orm";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import {
+  activityLog,
   agents,
   agentRuntimeState,
   agentTaskSessions,
@@ -9,8 +10,14 @@ import {
   companies,
   companySkills,
   createDb,
+  documents,
+  documentRevisions,
   heartbeatRunEvents,
   heartbeatRuns,
+  issueComments,
+  issueDocuments,
+  issueInboxArchives,
+  issueRelations,
   issues,
 } from "@paperclipai/db";
 import {
@@ -72,6 +79,13 @@ describeEmbeddedPostgres("claimQueuedRun dequeue-time issue-status check", () =>
     // 500ms is generous for the mock adapter path; if CI proves flaky, replace
     // with a polling drain on heartbeatRuns status != 'queued'.
     await new Promise((r) => setTimeout(r, 500));
+    await db.delete(activityLog);
+    await db.delete(issueComments);
+    await db.delete(issueDocuments);
+    await db.delete(issueInboxArchives);
+    await db.delete(issueRelations);
+    await db.delete(documentRevisions);
+    await db.delete(documents);
     await db.delete(issues);
     await db.delete(heartbeatRunEvents);
     await db.delete(heartbeatRuns);
