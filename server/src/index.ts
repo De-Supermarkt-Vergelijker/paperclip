@@ -23,6 +23,7 @@ import {
   companyMemberships,
   instanceUserRoles,
 } from "@paperclipai/db";
+import type { Db } from "@paperclipai/db";
 import detectPort from "detect-port";
 import { createApp } from "./app.js";
 import { loadConfig } from "./config.js";
@@ -769,7 +770,7 @@ export async function startServer(): Promise<StartedServer> {
     }, config.heartbeatSchedulerIntervalMs);
 
     // Scheduled-for issue transitions: backlog → todo when scheduledFor <= now
-    const issueSvc = issueService(db as any);
+    const issueSvc = issueService(db);
     setInterval(() => {
       void issueSvc
         .tickScheduledIssues(new Date())
