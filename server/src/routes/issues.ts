@@ -1769,10 +1769,14 @@ export function issueRoutes(
     await assertIssueEnvironmentSelection(companyId, req.body.executionWorkspaceSettings?.environmentId);
 
     const actor = getActorInfo(req);
+    const { scheduledFor: scheduledForRaw, ...createBody } = req.body;
     const executionPolicy = normalizeIssueExecutionPolicy(req.body.executionPolicy);
     const issue = await svc.create(companyId, {
-      ...req.body,
+      ...createBody,
       executionPolicy,
+      ...(scheduledForRaw !== undefined
+        ? { scheduledFor: scheduledForRaw ? new Date(scheduledForRaw) : null }
+        : {}),
       createdByAgentId: actor.agentId,
       createdByUserId: actor.actorType === "user" ? actor.actorId : null,
     });
@@ -1908,6 +1912,7 @@ export function issueRoutes(
       resume: resumeRequested,
       interrupt: interruptRequested,
       hiddenAt: hiddenAtRaw,
+      scheduledFor: scheduledForRaw,
       ...updateFields
     } = req.body;
     const shouldCancelActiveRunForCancelledStatus =
@@ -1990,6 +1995,9 @@ export function issueRoutes(
 
     if (hiddenAtRaw !== undefined) {
       updateFields.hiddenAt = hiddenAtRaw ? new Date(hiddenAtRaw) : null;
+    }
+    if (scheduledForRaw !== undefined) {
+      updateFields.scheduledFor = scheduledForRaw ? new Date(scheduledForRaw) : null;
     }
     if (
       commentBody &&
