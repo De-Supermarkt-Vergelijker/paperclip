@@ -395,6 +395,7 @@ describe("optimistic issue comments", () => {
         executionWorkspaceId: null,
         executionWorkspacePreference: null,
         executionWorkspaceSettings: null,
+        scheduledFor: null,
         startedAt: null,
         completedAt: null,
         cancelledAt: null,
