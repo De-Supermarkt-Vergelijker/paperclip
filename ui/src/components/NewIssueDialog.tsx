@@ -83,6 +83,7 @@ interface IssueDraft {
   executionWorkspaceMode?: string;
   selectedExecutionWorkspaceId?: string;
   useIsolatedExecutionWorkspace?: boolean;
+  scheduledFor?: string | null;
 }
 
 type StagedIssueFile = {
@@ -413,6 +414,7 @@ export function NewIssueDialog() {
   const [selectedExecutionWorkspaceId, setSelectedExecutionWorkspaceId] = useState("");
   const [expanded, setExpanded] = useState(false);
   const [dialogCompanyId, setDialogCompanyId] = useState<string | null>(null);
+  const [scheduledFor, setScheduledFor] = useState<string | null>(null);
   const [stagedFiles, setStagedFiles] = useState<StagedIssueFile[]>([]);
   const [isFileDragOver, setIsFileDragOver] = useState(false);
   const draftTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -616,6 +618,7 @@ export function NewIssueDialog() {
       assigneeChrome,
       executionWorkspaceMode,
       selectedExecutionWorkspaceId,
+      scheduledFor,
     });
   }, [
     newIssueOpen,
@@ -667,6 +670,7 @@ export function NewIssueDialog() {
     assigneeChrome,
     executionWorkspaceMode,
     selectedExecutionWorkspaceId,
+    scheduledFor,
     newIssueOpen,
     queueDraftSave,
   ]);
@@ -742,6 +746,7 @@ export function NewIssueDialog() {
           ?? (draft.useIsolatedExecutionWorkspace ? "isolated_workspace" : defaultExecutionWorkspaceModeForProject(restoredProject)),
       );
       setSelectedExecutionWorkspaceId(draft.selectedExecutionWorkspaceId ?? "");
+      setScheduledFor(draft.scheduledFor ?? null);
       executionWorkspaceDefaultProjectId.current = restoredProjectId || null;
     } else {
       const defaultProjectId = newIssueDefaults.projectId ?? "";
@@ -811,6 +816,7 @@ export function NewIssueDialog() {
     setSelectedExecutionWorkspaceId("");
     setExpanded(false);
     setDialogCompanyId(null);
+    setScheduledFor(null);
     setStagedFiles([]);
     setIsFileDragOver(false);
     setCompanyOpen(false);
@@ -890,6 +896,7 @@ export function NewIssueDialog() {
         : {}),
       ...(executionWorkspaceSettings ? { executionWorkspaceSettings } : {}),
       ...(executionPolicy ? { executionPolicy } : {}),
+      ...(scheduledFor ? { scheduledFor } : {}),
     });
   }
 
@@ -1762,6 +1769,25 @@ export function NewIssueDialog() {
             Upload
           </button>
 
+          {/* Scheduled date badge */}
+          {scheduledFor && (
+            <span className="inline-flex items-center gap-1 rounded-md border border-border px-2 py-1 text-xs text-muted-foreground bg-accent/30">
+              <Calendar className="h-3 w-3" />
+              {scheduledFor}
+              <button
+                type="button"
+                className="ml-0.5 p-0 rounded hover:bg-accent/50 transition-colors hover:text-foreground"
+                onClick={() => {
+                  setScheduledFor(null);
+                  if (status === "backlog") setStatus("todo");
+                }}
+                title="Clear scheduled date"
+              >
+                <X className="h-3 w-3" />
+              </button>
+            </span>
+          )}
+
           {/* More (dates) */}
           <Popover open={moreOpen} onOpenChange={setMoreOpen}>
             <PopoverTrigger asChild>
@@ -1769,15 +1795,31 @@ export function NewIssueDialog() {
                 <MoreHorizontal className="h-3 w-3" />
               </button>
             </PopoverTrigger>
-            <PopoverContent className="w-44 p-1" align="start">
-              <button className="flex items-center gap-2 w-full px-2 py-1.5 text-xs rounded hover:bg-accent/50 text-muted-foreground">
-                <Calendar className="h-3 w-3" />
-                Start date
-              </button>
-              <button className="flex items-center gap-2 w-full px-2 py-1.5 text-xs rounded hover:bg-accent/50 text-muted-foreground">
-                <Calendar className="h-3 w-3" />
-                Due date
-              </button>
+            <PopoverContent className="w-52 p-1" align="start">
+              <label className="flex items-center gap-2 w-full px-2 py-1.5 text-xs rounded hover:bg-accent/50 text-muted-foreground cursor-pointer">
+                <Calendar className="h-3 w-3 shrink-0" />
+                <span className="shrink-0">Scheduled</span>
+                <input
+                  type="date"
+                  value={scheduledFor ?? ""}
+                  onChange={(e) => {
+                    const val = e.target.value || null;
+                    setScheduledFor(val);
+                    if (val) {
+                      const selected = new Date(val + "T00:00:00");
+                      const today = new Date();
+                      today.setHours(0, 0, 0, 0);
+                      if (selected > today) {
+                        setStatus("backlog");
+                      }
+                    } else if (status === "backlog") {
+                      setStatus("todo");
+                    }
+                    setMoreOpen(false);
+                  }}
+                  className="flex-1 min-w-0 text-xs bg-transparent border-none outline-none cursor-pointer text-foreground [color-scheme:dark]"
+                />
+              </label>
             </PopoverContent>
           </Popover>
         </div>
