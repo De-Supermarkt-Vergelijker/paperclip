@@ -9,6 +9,7 @@ import {
   createDb,
   executionWorkspaces,
   instanceSettings,
+  heartbeatRuns,
   issueComments,
   issueInboxArchives,
   issues,
@@ -1361,5 +1362,89 @@ describeEmbeddedPostgres("issueService.update auto-reassign on in_review", () =>
     await expect(svc.update(issueId, { status: "in_review" })).rejects.toThrow(
       /not found/i,
     );
+  });
+});
+
+describeEmbeddedPostgres("issueService.release clears execution lock fields", () => {
+  let db!: ReturnType<typeof createDb>;
+  let svc!: ReturnType<typeof issueService>;
+  let tempDb: Awaited<ReturnType<typeof startEmbeddedPostgresTestDatabase>> | null = null;
+
+  beforeAll(async () => {
+    tempDb = await startEmbeddedPostgresTestDatabase("paperclip-issues-release-");
+    db = createDb(tempDb.connectionString);
+    svc = issueService(db);
+  }, 20_000);
+
+  afterEach(async () => {
+    await db.delete(issueComments);
+    await db.delete(issueInboxArchives);
+    await db.delete(activityLog);
+    await db.delete(issues);
+    await db.delete(heartbeatRuns);
+    await db.delete(agents);
+    await db.delete(instanceSettings);
+    await db.delete(companies);
+  });
+
+  afterAll(async () => {
+    await tempDb?.cleanup();
+  });
+
+  it("clears executionRunId, executionAgentNameKey, and executionLockedAt on release", async () => {
+    const companyId = randomUUID();
+    const agentId = randomUUID();
+    const runId = randomUUID();
+
+    await db.insert(companies).values({
+      id: companyId,
+      name: "TestCo",
+      issuePrefix: `T${companyId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
+      requireBoardApprovalForNewAgents: false,
+    });
+
+    await db.insert(agents).values({
+      id: agentId,
+      companyId,
+      name: "TestAgent",
+      role: "engineer",
+      status: "active",
+      adapterType: "codex_local",
+      adapterConfig: {},
+      runtimeConfig: {},
+      permissions: {},
+    });
+
+    await db.insert(heartbeatRuns).values({
+      id: runId,
+      companyId,
+      agentId,
+      invocationSource: "on_demand",
+      status: "running",
+    });
+
+    const issueId = randomUUID();
+    await db.insert(issues).values({
+      id: issueId,
+      companyId,
+      title: "Issue with execution lock",
+      status: "in_progress",
+      priority: "medium",
+      assigneeAgentId: agentId,
+      checkoutRunId: runId,
+      executionRunId: runId,
+      executionAgentNameKey: "testagent",
+      executionLockedAt: new Date(),
+    });
+
+    const released = await svc.release(issueId, agentId, runId);
+
+    expect(released).not.toBeNull();
+    expect(released!.status).toBe("todo");
+    expect(released!.assigneeAgentId).toBeNull();
+    expect(released!.checkoutRunId).toBeNull();
+    expect(released!.executionRunId).toBeNull();
+    expect(released!.executionAgentNameKey).toBeNull();
+    expect(released!.executionLockedAt).toBeNull();
   });
 });
