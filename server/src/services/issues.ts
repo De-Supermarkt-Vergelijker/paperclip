@@ -1,5 +1,5 @@
 import { Buffer } from "node:buffer";
-import { and, asc, desc, eq, inArray, isNull, ne, or, sql } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNotNull, isNull, lte, ne, or, sql } from "drizzle-orm";
 import type { Db } from "@paperclipai/db";
 import {
   activityLog,
@@ -3572,7 +3572,8 @@ export function issueService(db: Db) {
         .where(
           and(
             eq(issues.status, "backlog"),
-            sql`${issues.scheduledFor} <= ${now}`,
+            isNotNull(issues.scheduledFor),
+            lte(issues.scheduledFor, now),
             isNull(issues.hiddenAt),
           ),
         )
