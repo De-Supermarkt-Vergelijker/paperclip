@@ -1170,6 +1170,7 @@ const issueListSelect = {
   startedAt: issues.startedAt,
   completedAt: issues.completedAt,
   cancelledAt: issues.cancelledAt,
+  scheduledFor: issues.scheduledFor,
   hiddenAt: issues.hiddenAt,
   createdAt: issues.createdAt,
   updatedAt: issues.updatedAt,
