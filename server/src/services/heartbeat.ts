@@ -993,16 +993,6 @@ export function shouldResetTaskSessionForWake(
 ) {
   if (contextSnapshot?.forceFreshSession === true) return true;
 
-  const wakeReason = readNonEmptyString(contextSnapshot?.wakeReason);
-  if (
-    wakeReason === "issue_assigned" ||
-    wakeReason === "execution_review_requested" ||
-    wakeReason === "execution_approval_requested" ||
-    wakeReason === "execution_changes_requested"
-  ) {
-    return true;
-  }
-
   const wakeSource = readNonEmptyString(contextSnapshot?.wakeSource);
   if (wakeSource === "timer") return true;
   return false;
@@ -1031,12 +1021,6 @@ function describeSessionResetReason(
   contextSnapshot: Record<string, unknown> | null | undefined,
 ) {
   if (contextSnapshot?.forceFreshSession === true) return "forceFreshSession was requested";
-
-  const wakeReason = readNonEmptyString(contextSnapshot?.wakeReason);
-  if (wakeReason === "issue_assigned") return "wake reason is issue_assigned";
-  if (wakeReason === "execution_review_requested") return "wake reason is execution_review_requested";
-  if (wakeReason === "execution_approval_requested") return "wake reason is execution_approval_requested";
-  if (wakeReason === "execution_changes_requested") return "wake reason is execution_changes_requested";
 
   const wakeSource = readNonEmptyString(contextSnapshot?.wakeSource);
   if (wakeSource === "timer") return "wake source is timer (fresh session per timer heartbeat)";
