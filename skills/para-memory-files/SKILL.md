@@ -12,7 +12,7 @@ description: >
 
 # PARA Memory Files
 
-Persistent, file-based memory organized by Tiago Forte's PARA method. Three layers: a knowledge graph, daily notes, and tacit knowledge. All paths are relative to `$AGENT_HOME`.
+Persistent, file-based memory organized by Tiago Forte's PARA method. Three layers: a knowledge graph, daily notes, and tacit knowledge. All paths below are rooted at `$AGENT_HOME`. `~/` is shell-tilde and expands to `$HOME`, NOT `$AGENT_HOME`. Always use `$AGENT_HOME/...` (literal env var or resolved absolute path); never `~/memory/` or `~/life/`.
 
 ## Three Memory Layers
 
