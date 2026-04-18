@@ -7,8 +7,32 @@ import { errorHandler } from "../middleware/index.js";
 const mockIssueService = vi.hoisted(() => ({
   getById: vi.fn(),
   update: vi.fn(),
-  addComment: vi.fn(),
+  addComment: vi.fn(async () => ({
+    id: "comment-default",
+    issueId: "11111111-1111-4111-8111-111111111111",
+    body: "",
+    createdAt: new Date(),
+    authorAgentId: null,
+    authorUserId: null,
+  })),
   findMentionedAgents: vi.fn(),
+  findMentionedProjectIds: vi.fn(async () => []),
+  getRelationSummaries: vi.fn(async () => ({ blockedBy: [], blocks: [] })),
+  listWakeableBlockedDependents: vi.fn(async () => []),
+  getWakeableParentAfterChildCompletion: vi.fn(async () => null),
+  getWakeableParentForChildEvent: vi.fn(async () => null),
+  getAncestors: vi.fn(async () => []),
+}));
+
+const mockIssueReferenceService = vi.hoisted(() => ({
+  listIssueReferenceSummary: vi.fn(async () => ({ inbound: [], outbound: [] })),
+  syncComment: vi.fn(async () => undefined),
+  syncIssue: vi.fn(async () => undefined),
+  diffIssueReferenceSummary: vi.fn(() => ({
+    addedReferencedIssues: [],
+    removedReferencedIssues: [],
+    currentReferencedIssues: [],
+  })),
 }));
 
 const mockAccessService = vi.hoisted(() => ({
@@ -55,6 +79,7 @@ vi.mock("../services/index.js", () => ({
   accessService: () => mockAccessService,
   agentService: () => mockAgentService,
   documentService: () => ({}),
+  environmentService: () => ({}),
   executionWorkspaceService: () => ({}),
   feedbackService: () => ({
     listIssueVotesForUser: vi.fn(async () => []),
@@ -73,7 +98,13 @@ vi.mock("../services/index.js", () => ({
     listCompanyIds: vi.fn(async () => ["company-1"]),
   }),
   issueApprovalService: () => ({}),
+  issueReferenceService: () => mockIssueReferenceService,
   issueService: () => mockIssueService,
+  issueThreadInteractionService: () => ({
+    expireStaleRequestConfirmationsForIssueDocument: vi.fn(async () => []),
+    expireRequestConfirmationsSupersededByComment: vi.fn(async () => []),
+    listForIssue: vi.fn(async () => []),
+  }),
   logActivity: mockLogActivity,
   projectService: () => ({}),
   routineService: () => ({
