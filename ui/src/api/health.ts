@@ -22,6 +22,7 @@ export type HealthStatus = {
   bootstrapInviteActive?: boolean;
   features?: {
     companyDeletionEnabled?: boolean;
+    agentMemoryTabEnabled?: boolean;
   };
   devServer?: DevServerHealthStatus;
 };
