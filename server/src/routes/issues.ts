@@ -2536,7 +2536,14 @@ export function issueRoutes(
       try {
         mentionedIds = await svc.findMentionedAgents(issue.companyId, req.body.body);
       } catch (err) {
-        logger.warn({ err, issueId: id }, "failed to resolve @-mentions");
+        logger.error({ err, issueId: id }, "failed to resolve @-mentions");
+        const tc = getTelemetryClient();
+        if (tc) {
+          trackWakeEmissionFailure(tc, {
+            reason: "mention_resolution_error",
+            source: "issue.comment",
+          });
+        }
       }
 
       for (const mentionedId of mentionedIds) {
@@ -2566,7 +2573,16 @@ export function issueRoutes(
       for (const [agentId, wakeup] of wakeups.entries()) {
         heartbeat
           .wakeup(agentId, wakeup)
-          .catch((err) => logger.warn({ err, issueId: currentIssue.id, agentId }, "failed to wake agent on issue comment"));
+          .catch((err) => {
+            logger.error({ err, issueId: currentIssue.id, agentId }, "failed to wake agent on issue comment");
+            const tc = getTelemetryClient();
+            if (tc) {
+              trackWakeEmissionFailure(tc, {
+                reason: "heartbeat_wakeup_error",
+                source: "issue.comment",
+              });
+            }
+          });
       }
     })();
 
