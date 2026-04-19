@@ -1274,6 +1274,7 @@ export function issueRoutes(
           reason: "issue_assigned",
           payload: {
             issueId: issue.id,
+            ...(comment ? { commentId: comment.id } : {}),
             mutation: "update",
             ...(interruptedRunId ? { interruptedRunId } : {}),
           },
@@ -1281,6 +1282,13 @@ export function issueRoutes(
           requestedByActorId: actor.actorId,
           contextSnapshot: {
             issueId: issue.id,
+            ...(comment
+              ? {
+                  taskId: issue.id,
+                  commentId: comment.id,
+                  wakeCommentId: comment.id,
+                }
+              : {}),
             source: "issue.update",
             ...(interruptedRunId ? { interruptedRunId } : {}),
           },

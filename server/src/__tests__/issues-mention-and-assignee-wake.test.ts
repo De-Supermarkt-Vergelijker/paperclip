@@ -184,6 +184,75 @@ describe("issue PATCH wake emission", () => {
     expect(assignmentCalls).toHaveLength(0);
   });
 
+  it("threads commentId and wakeCommentId into the assignee wake when PATCH carries an inline comment", async () => {
+    // Covers the addCommentAndReassign flow (PATCH with comment + assignee change).
+    // Without commentId/wakeCommentId in the wake payload + contextSnapshot, the
+    // consumer coalesces the follow-up run instead of queuing it.
+    mockIssueService.getById.mockResolvedValue(makeIssue({ assigneeAgentId: WORKER }));
+    mockIssueService.update.mockImplementation(async (_id: string) =>
+      makeIssue({ assigneeAgentId: CREATOR }),
+    );
+    mockIssueService.addComment.mockResolvedValue({
+      id: "comment-inline-1",
+      issueId: ISSUE_ID,
+      companyId: "company-1",
+      body: "reassigning with a note",
+      createdAt: new Date(),
+      updatedAt: new Date(),
+      authorAgentId: null,
+      authorUserId: "local-board",
+    });
+
+    const res = await request(createApp())
+      .patch(`/api/issues/${ISSUE_ID}`)
+      .send({ assigneeAgentId: CREATOR, comment: "reassigning with a note" });
+
+    expect(res.status).toBe(200);
+    await flushMicrotasks();
+
+    const assignmentCall = mockHeartbeatService.wakeup.mock.calls.find(
+      ([, payload]: any[]) => payload?.reason === "issue_assigned",
+    );
+    expect(assignmentCall).toBeDefined();
+    const [, payload] = assignmentCall!;
+    expect(payload.payload).toEqual(
+      expect.objectContaining({ issueId: ISSUE_ID, commentId: "comment-inline-1", mutation: "update" }),
+    );
+    expect(payload.contextSnapshot).toEqual(
+      expect.objectContaining({
+        issueId: ISSUE_ID,
+        taskId: ISSUE_ID,
+        commentId: "comment-inline-1",
+        wakeCommentId: "comment-inline-1",
+        source: "issue.update",
+      }),
+    );
+  });
+
+  it("omits commentId/wakeCommentId from the assignee wake when the PATCH has no comment", async () => {
+    mockIssueService.getById.mockResolvedValue(makeIssue({ assigneeAgentId: WORKER }));
+    mockIssueService.update.mockImplementation(async (_id: string) =>
+      makeIssue({ assigneeAgentId: CREATOR }),
+    );
+
+    const res = await request(createApp())
+      .patch(`/api/issues/${ISSUE_ID}`)
+      .send({ assigneeAgentId: CREATOR });
+
+    expect(res.status).toBe(200);
+    await flushMicrotasks();
+
+    const assignmentCall = mockHeartbeatService.wakeup.mock.calls.find(
+      ([, payload]: any[]) => payload?.reason === "issue_assigned",
+    );
+    expect(assignmentCall).toBeDefined();
+    const [, payload] = assignmentCall!;
+    expect(payload.payload).not.toHaveProperty("commentId");
+    expect(payload.contextSnapshot).not.toHaveProperty("commentId");
+    expect(payload.contextSnapshot).not.toHaveProperty("wakeCommentId");
+    expect(payload.contextSnapshot).not.toHaveProperty("taskId");
+  });
+
   it("wakes agents resolved from a plain-text @slug comment mention", async () => {
     mockIssueService.getById.mockResolvedValue(makeIssue());
     mockIssueService.update.mockImplementation(async (_id: string) => makeIssue());
