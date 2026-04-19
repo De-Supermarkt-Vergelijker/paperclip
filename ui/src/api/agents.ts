@@ -195,7 +195,44 @@ export const agentsApi = {
     api.post<ClaudeLoginResult>(agentPath(id, companyId, "/claude-login"), {}),
   availableSkills: () =>
     api.get<{ skills: AvailableSkill[] }>("/skills/available"),
+  // Fork-patch (PAPERCLIP_FEATURE_AGENT_MEMORY_TAB): read-only memory browser.
+  // Interim surface per https://github.com/paperclipai/paperclip/issues/3960.
+  memoryFiles: (id: string, companyId?: string) =>
+    api.get<AgentMemoryListing>(agentPath(id, companyId, "/memory-files")),
+  memoryFile: async (id: string, relativePath: string, companyId?: string): Promise<AgentMemoryFileContent> => {
+    const encodedPath = relativePath.split("/").map(encodeURIComponent).join("/");
+    const suffix = `/memory-files/${encodedPath}`;
+    const url = `${withCompanyScope(agentPath(id, undefined, suffix), companyId)}`;
+    const res = await fetch(`/api${url}`, { credentials: "include", headers: { Accept: "*/*" } });
+    if (!res.ok) {
+      const body = await res.json().catch(() => null) as { error?: string } | null;
+      throw new ApiError(body?.error ?? `Request failed: ${res.status}`, res.status, body);
+    }
+    return {
+      body: await res.text(),
+      contentType: res.headers.get("Content-Type") ?? "application/octet-stream",
+      size: Number(res.headers.get("Content-Length") ?? 0),
+    };
+  },
 };
+
+export interface AgentMemoryEntry {
+  path: string;
+  size: number;
+  mtime: string;
+  isDir: boolean;
+}
+
+export interface AgentMemoryListing {
+  entries: AgentMemoryEntry[];
+  maxDepth: number;
+}
+
+export interface AgentMemoryFileContent {
+  body: string;
+  contentType: string;
+  size: number;
+}
 
 export interface AvailableSkill {
   name: string;

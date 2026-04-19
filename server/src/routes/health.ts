@@ -6,6 +6,7 @@ import type { DeploymentExposure, DeploymentMode } from "@paperclipai/shared";
 import { readPersistedDevServerStatus, toDevServerHealthStatus } from "../dev-server-status.js";
 import { instanceSettingsService } from "../services/instance-settings.js";
 import { serverVersion } from "../version.js";
+import { isAgentMemoryTabEnabled } from "../feature-flags.js";
 
 export function healthRoutes(
   db?: Db,
@@ -95,6 +96,7 @@ export function healthRoutes(
       bootstrapInviteActive,
       features: {
         companyDeletionEnabled: opts.companyDeletionEnabled,
+        agentMemoryTabEnabled: isAgentMemoryTabEnabled(),
       },
       ...(devServer ? { devServer } : {}),
     });
