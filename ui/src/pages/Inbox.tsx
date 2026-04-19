@@ -769,6 +769,7 @@ export function Inbox() {
     queryFn: () =>
       issuesApi.list(selectedCompanyId!, {
         assigneeUserId: "me",
+        inboxArchivedByUserId: "me",
         status: INBOX_MINE_ISSUE_STATUS_FILTER,
       }),
     enabled: !!selectedCompanyId,
