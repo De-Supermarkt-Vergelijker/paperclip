@@ -1,5 +1,5 @@
 import { Buffer } from "node:buffer";
-import { and, asc, desc, eq, gt, inArray, isNull, lt, ne, notInArray, or, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gt, inArray, isNull, lt, lte, ne, notInArray, or, sql } from "drizzle-orm";
 import type { Db } from "@paperclipai/db";
 import {
   activityLog,
@@ -68,6 +68,9 @@ const ISSUE_LIST_RELATED_QUERY_CHUNK_SIZE = 500;
 export const MAX_CHILD_ISSUES_CREATED_BY_HELPER = 25;
 const MAX_CHILD_COMPLETION_SUMMARIES = 20;
 const CHILD_COMPLETION_SUMMARY_BODY_MAX_CHARS = 500;
+
+let consecutiveTickErrors = 0;
+
 function assertTransition(from: string, to: string) {
   if (from === to) return;
   if (!ALL_ISSUE_STATUSES.includes(to)) {
@@ -3960,25 +3963,46 @@ export function issueService(db: Db) {
     },
 
     tickScheduledIssues: async (now: Date = new Date()): Promise<{ transitioned: number }> => {
-      const due = await db
-        .select({ id: issues.id, identifier: issues.identifier })
-        .from(issues)
-        .where(
-          and(
-            eq(issues.status, "backlog"),
-            sql`${issues.scheduledFor} <= ${now}`,
-            isNull(issues.hiddenAt),
-          ),
+      const startedAt = Date.now();
+      try {
+        const due = await db
+          .select({ id: issues.id, identifier: issues.identifier })
+          .from(issues)
+          .where(
+            and(
+              eq(issues.status, "backlog"),
+              lte(issues.scheduledFor, now),
+              isNull(issues.hiddenAt),
+            ),
+          );
+        let transitioned = 0;
+        for (const row of due) {
+          await db
+            .update(issues)
+            .set({ status: "todo", updatedAt: now })
+            .where(eq(issues.id, row.id));
+          transitioned++;
+        }
+        consecutiveTickErrors = 0;
+        logger.debug(
+          { transitioned, durationMs: Date.now() - startedAt },
+          "scheduled issues tick completed",
         );
-      let transitioned = 0;
-      for (const row of due) {
-        await db
-          .update(issues)
-          .set({ status: "todo", updatedAt: now })
-          .where(eq(issues.id, row.id));
-        transitioned++;
+        return { transitioned };
+      } catch (err) {
+        consecutiveTickErrors++;
+        logger.error(
+          { err, consecutiveTickErrors, durationMs: Date.now() - startedAt },
+          "scheduled issues tick failed",
+        );
+        if (consecutiveTickErrors >= 3) {
+          logger.error(
+            { consecutiveTickErrors },
+            "scheduled issues tick failing repeatedly",
+          );
+        }
+        throw err;
       }
-      return { transitioned };
     },
   };
 }

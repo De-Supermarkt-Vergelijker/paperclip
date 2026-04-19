@@ -2518,3 +2518,93 @@ describeEmbeddedPostgres("issueService.findMentionedAgents slug + href resolutio
     expect(ids).toEqual([]);
   });
 });
+
+describeEmbeddedPostgres("issueService.tickScheduledIssues", () => {
+  let db!: ReturnType<typeof createDb>;
+  let svc!: ReturnType<typeof issueService>;
+  let tempDb: Awaited<ReturnType<typeof startEmbeddedPostgresTestDatabase>> | null = null;
+
+  beforeAll(async () => {
+    tempDb = await startEmbeddedPostgresTestDatabase("paperclip-tick-scheduled-");
+    db = createDb(tempDb.connectionString);
+    svc = issueService(db);
+  }, 20_000);
+
+  afterEach(async () => {
+    await db.delete(issues);
+    await db.delete(companies);
+  });
+
+  afterAll(async () => {
+    await tempDb?.cleanup();
+  });
+
+  it("transitions due backlog issues to todo", async () => {
+    const companyId = randomUUID();
+    const dueIssueId = randomUUID();
+    const futureIssueId = randomUUID();
+    const nonBacklogIssueId = randomUUID();
+    const noScheduledForIssueId = randomUUID();
+
+    await db.insert(companies).values({
+      id: companyId,
+      name: "Paperclip",
+      issuePrefix: "PAP",
+      requireBoardApprovalForNewAgents: false,
+    });
+
+    const now = new Date("2026-04-19T12:00:00Z");
+    const past = new Date(now.getTime() - 60_000);
+    const future = new Date(now.getTime() + 60_000);
+
+    await db.insert(issues).values([
+      {
+        id: dueIssueId,
+        companyId,
+        title: "Due backlog issue",
+        status: "backlog",
+        priority: "medium",
+        scheduledFor: past,
+      },
+      {
+        id: futureIssueId,
+        companyId,
+        title: "Future backlog issue",
+        status: "backlog",
+        priority: "medium",
+        scheduledFor: future,
+      },
+      {
+        id: nonBacklogIssueId,
+        companyId,
+        title: "Non-backlog issue with past scheduledFor",
+        status: "todo",
+        priority: "medium",
+        scheduledFor: past,
+      },
+      {
+        id: noScheduledForIssueId,
+        companyId,
+        title: "Backlog issue without scheduledFor",
+        status: "backlog",
+        priority: "medium",
+      },
+    ]);
+
+    const result = await svc.tickScheduledIssues(now);
+
+    expect(result.transitioned).toBe(1);
+
+    const [dueIssue] = await db.select().from(issues).where(eq(issues.id, dueIssueId));
+    expect(dueIssue?.status).toBe("todo");
+
+    const [futureIssue] = await db.select().from(issues).where(eq(issues.id, futureIssueId));
+    expect(futureIssue?.status).toBe("backlog");
+
+    const [nonBacklogIssue] = await db.select().from(issues).where(eq(issues.id, nonBacklogIssueId));
+    expect(nonBacklogIssue?.status).toBe("todo");
+
+    const [noScheduledForIssue] = await db.select().from(issues).where(eq(issues.id, noScheduledForIssueId));
+    expect(noScheduledForIssue?.status).toBe("backlog");
+  });
+});
