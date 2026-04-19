@@ -13,6 +13,8 @@ import { healthRoutes } from "./routes/health.js";
 import { companyRoutes } from "./routes/companies.js";
 import { companySkillRoutes } from "./routes/company-skills.js";
 import { agentRoutes } from "./routes/agents.js";
+import { agentMemoryRoutes } from "./routes/agent-memory.js";
+import { isAgentMemoryTabEnabled } from "./feature-flags.js";
 import { projectRoutes } from "./routes/projects.js";
 import { issueRoutes } from "./routes/issues.js";
 import { routineRoutes } from "./routes/routines.js";
@@ -192,6 +194,12 @@ export async function createApp(
   api.use("/companies", companyRoutes(db, opts.storageService));
   api.use(companySkillRoutes(db));
   api.use(agentRoutes(db));
+  // Fork-patch: Agent Memory tab (read-only). Feature-flagged per upstream
+  // RFC https://github.com/paperclipai/paperclip/issues/3960 — routes are
+  // only registered when PAPERCLIP_FEATURE_AGENT_MEMORY_TAB=true.
+  if (isAgentMemoryTabEnabled()) {
+    api.use(agentMemoryRoutes(db));
+  }
   api.use(assetRoutes(db, opts.storageService));
   api.use(projectRoutes(db));
   api.use(issueRoutes(db, opts.storageService, {

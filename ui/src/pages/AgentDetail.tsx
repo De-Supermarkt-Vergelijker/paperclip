@@ -33,6 +33,8 @@ import { getUIAdapter, buildTranscript, onAdapterChange } from "../adapters";
 import { StatusBadge } from "../components/StatusBadge";
 import { agentStatusDot, agentStatusDotDefault } from "../lib/status-colors";
 import { MarkdownBody } from "../components/MarkdownBody";
+import { AgentMemoryTab } from "../components/AgentMemoryTab";
+import { healthApi } from "../api/health";
 import { CopyText } from "../components/CopyText";
 import { EntityRow } from "../components/EntityRow";
 import { Identity } from "../components/Identity";
@@ -224,13 +226,21 @@ function scrollToContainerBottom(container: ScrollContainer, behavior: ScrollBeh
   container.scrollTo({ top: container.scrollHeight, behavior });
 }
 
-type AgentDetailView = "dashboard" | "instructions" | "configuration" | "skills" | "runs" | "budget";
+type AgentDetailView =
+  | "dashboard"
+  | "instructions"
+  | "configuration"
+  | "skills"
+  | "runs"
+  | "budget"
+  | "memory";
 
 function parseAgentDetailView(value: string | null): AgentDetailView {
   if (value === "instructions" || value === "prompts") return "instructions";
   if (value === "configure" || value === "configuration") return "configuration";
   if (value === "skills") return "skills";
   if (value === "budget") return "budget";
+  if (value === "memory") return "memory";
   if (value === "runs") return value;
   return "dashboard";
 }
@@ -690,6 +700,15 @@ export function AgentDetail() {
     staleTime: 5_000,
   });
 
+  // Fork-patch (PAPERCLIP_FEATURE_AGENT_MEMORY_TAB): Memory tab visibility.
+  // Tracks upstream RFC https://github.com/paperclipai/paperclip/issues/3960.
+  const { data: healthStatus } = useQuery({
+    queryKey: queryKeys.health,
+    queryFn: () => healthApi.get(),
+    staleTime: 60_000,
+  });
+  const memoryTabEnabled = healthStatus?.features?.agentMemoryTabEnabled === true;
+
   const assignedIssues = (allIssues ?? [])
     .sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
   const reportsToAgent = (allAgents ?? []).find((a) => a.id === agent?.reportsTo);
@@ -1012,6 +1031,9 @@ export function AgentDetail() {
               { value: "configuration", label: "Configuration" },
               { value: "runs", label: "Runs" },
               { value: "budget", label: "Budget" },
+              ...(memoryTabEnabled
+                ? [{ value: "memory", label: "Memory" } as const]
+                : []),
             ]}
             value={activeView}
             onValueChange={(value) => navigate(`/agents/${canonicalAgentRef}/${value}`)}
@@ -1147,6 +1169,10 @@ export function AgentDetail() {
           />
         </div>
       ) : null}
+
+      {activeView === "memory" && memoryTabEnabled && (
+        <AgentMemoryTab agentId={agent.id} companyId={resolvedCompanyId ?? undefined} />
+      )}
     </div>
   );
 }
