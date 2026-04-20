@@ -16,6 +16,8 @@ Adapter: claude_local
 Core fields:
 - cwd (string, optional): default absolute working directory fallback for the agent process (created if missing when possible)
 - instructionsFilePath (string, optional): absolute path to a markdown instructions file injected at runtime
+- heartbeatBroadFilePath (string, optional): absolute path to the broad-mode (timer) instructions file; loaded instead of instructionsFilePath when wakeReason === "heartbeat_timer"
+- heartbeatFocusedFilePath (string, optional): absolute path to the focused-mode (event-triggered) instructions file; loaded instead of instructionsFilePath for any non-timer wake reason
 - model (string, optional): Claude model id
 - effort (string, optional): reasoning effort passed via --effort (low|medium|high)
 - chrome (boolean, optional): pass --chrome when running Claude

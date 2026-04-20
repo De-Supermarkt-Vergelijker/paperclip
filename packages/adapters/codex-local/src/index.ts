@@ -23,6 +23,8 @@ Adapter: codex_local
 Core fields:
 - cwd (string, optional): default absolute working directory fallback for the agent process (created if missing when possible)
 - instructionsFilePath (string, optional): absolute path to a markdown instructions file prepended to stdin prompt at runtime
+- heartbeatBroadFilePath (string, optional): absolute path to the broad-mode (timer) instructions file; loaded instead of instructionsFilePath when wakeReason === "heartbeat_timer"
+- heartbeatFocusedFilePath (string, optional): absolute path to the focused-mode (event-triggered) instructions file; loaded instead of instructionsFilePath for any non-timer wake reason
 - model (string, optional): Codex model id
 - modelReasoningEffort (string, optional): reasoning effort override (minimal|low|medium|high|xhigh) passed via -c model_reasoning_effort=...
 - promptTemplate (string, optional): run prompt template

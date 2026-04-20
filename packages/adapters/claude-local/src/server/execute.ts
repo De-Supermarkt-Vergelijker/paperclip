@@ -20,6 +20,7 @@ import {
   ensurePathInEnv,
   resolveCommandForLogs,
   renderTemplate,
+  resolveHeartbeatInstructionsPath,
   runChildProcess,
 } from "@paperclipai/adapter-utils/server-utils";
 import {
@@ -318,11 +319,14 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
   const chrome = asBoolean(config.chrome, false);
   const maxTurns = asNumber(config.maxTurnsPerRun, 0);
   const dangerouslySkipPermissions = asBoolean(config.dangerouslySkipPermissions, false);
-  const instructionsFilePath = asString(config.instructionsFilePath, "").trim();
+  const resolvedInstructions = resolveHeartbeatInstructionsPath(config, context);
+  const instructionsFilePath = resolvedInstructions.instructionsFilePath;
   const instructionsFileDir = instructionsFilePath ? `${path.dirname(instructionsFilePath)}/` : "";
   const commandNotes = instructionsFilePath
     ? [
-        `Injected agent instructions via --append-system-prompt-file ${instructionsFilePath} (with path directive appended)`,
+        resolvedInstructions.modeSpecific
+          ? `Injected agent instructions via --append-system-prompt-file ${instructionsFilePath} (heartbeat mode: ${resolvedInstructions.mode}, with path directive appended)`
+          : `Injected agent instructions via --append-system-prompt-file ${instructionsFilePath} (with path directive appended)`,
       ]
     : [];
 

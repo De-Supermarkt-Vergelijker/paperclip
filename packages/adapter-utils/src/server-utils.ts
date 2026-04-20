@@ -216,6 +216,43 @@ export function joinPromptSections(
     .join(separator);
 }
 
+export type HeartbeatMode = "broad" | "focused";
+
+export interface ResolvedHeartbeatInstructionsPath {
+  /** Final path to load. Empty string when nothing is configured. */
+  instructionsFilePath: string;
+  /** "broad" when wakeReason === "heartbeat_timer", otherwise "focused". */
+  mode: HeartbeatMode;
+  /** True when the path came from a mode-specific config field. */
+  modeSpecific: boolean;
+}
+
+/**
+ * Pick the instructions file path for the current heartbeat.
+ *
+ * Per AIU-451: when `heartbeatBroadFilePath` and/or `heartbeatFocusedFilePath`
+ * are set on the adapter config, the wake-reason picks the right file —
+ * `heartbeat_timer` -> broad, anything else -> focused. When the mode-specific
+ * field is missing, falls back to the legacy `instructionsFilePath`. This keeps
+ * the contract backward-compatible: configs without the new fields behave
+ * exactly as before.
+ */
+export function resolveHeartbeatInstructionsPath(
+  config: Record<string, unknown>,
+  context: Record<string, unknown>,
+): ResolvedHeartbeatInstructionsPath {
+  const legacy = asString(config.instructionsFilePath, "").trim();
+  const broad = asString(config.heartbeatBroadFilePath, "").trim();
+  const focused = asString(config.heartbeatFocusedFilePath, "").trim();
+  const wakeReason = typeof context.wakeReason === "string" ? context.wakeReason.trim() : "";
+  const mode: HeartbeatMode = wakeReason === "heartbeat_timer" ? "broad" : "focused";
+  const modeSpecific = mode === "broad" ? broad : focused;
+  if (modeSpecific) {
+    return { instructionsFilePath: modeSpecific, mode, modeSpecific: true };
+  }
+  return { instructionsFilePath: legacy, mode, modeSpecific: false };
+}
+
 export function redactEnvForLogs(env: Record<string, string>): Record<string, string> {
   const redacted: Record<string, string> = {};
   for (const [key, value] of Object.entries(env)) {

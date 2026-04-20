@@ -18,6 +18,7 @@ import {
   resolveCommandForLogs,
   resolvePaperclipDesiredSkillNames,
   renderTemplate,
+  resolveHeartbeatInstructionsPath,
   joinPromptSections,
   runChildProcess,
 } from "@paperclipai/adapter-utils/server-utils";
@@ -412,7 +413,8 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
       `[paperclip] Codex session "${runtimeSessionId}" was saved for cwd "${runtimeSessionCwd}" and will not be resumed in "${cwd}".\n`,
     );
   }
-  const instructionsFilePath = asString(config.instructionsFilePath, "").trim();
+  const resolvedInstructions = resolveHeartbeatInstructionsPath(config, context);
+  const instructionsFilePath = resolvedInstructions.instructionsFilePath;
   const instructionsDir = instructionsFilePath ? `${path.dirname(instructionsFilePath)}/` : "";
   let instructionsPrefix = "";
   let instructionsChars = 0;
@@ -439,8 +441,11 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
       return [repoAgentsNote];
     }
     if (instructionsPrefix.length > 0) {
+      const loadedNote = resolvedInstructions.modeSpecific
+        ? `Loaded agent instructions from ${instructionsFilePath} (heartbeat mode: ${resolvedInstructions.mode})`
+        : `Loaded agent instructions from ${instructionsFilePath}`;
       return [
-        `Loaded agent instructions from ${instructionsFilePath}`,
+        loadedNote,
         `Prepended instructions + path directive to stdin prompt (relative references from ${instructionsDir}).`,
         repoAgentsNote,
       ];
