@@ -55,11 +55,14 @@ function assertTransition(from: string, to: string) {
 
 function applyScheduledForAutoBacklog(
   patch: Partial<typeof issues.$inferInsert>,
-  existingStatus?: string,
+  existing?: { status?: string | null; scheduledFor?: Date | null },
 ): void {
-  const effectiveStatus = patch.status ?? existingStatus;
-  const scheduledFor = patch.scheduledFor;
-  if (scheduledFor && effectiveStatus === "todo" && scheduledFor > new Date()) {
+  const effectiveStatus = patch.status ?? existing?.status;
+  // When scheduledFor is omitted from the patch, fall back to the stored value so
+  // that status-only updates (e.g. delegation reassigns) still respect a prior schedule.
+  const effectiveScheduledFor =
+    patch.scheduledFor !== undefined ? patch.scheduledFor : existing?.scheduledFor ?? null;
+  if (effectiveScheduledFor && effectiveStatus === "todo" && effectiveScheduledFor > new Date()) {
     patch.status = "backlog";
   }
 }
@@ -69,7 +72,7 @@ function applyStatusSideEffects(
   patch: Partial<typeof issues.$inferInsert>,
   existing?: typeof issues.$inferSelect,
 ): Partial<typeof issues.$inferInsert> {
-  applyScheduledForAutoBacklog(patch, existing?.status);
+  applyScheduledForAutoBacklog(patch, existing);
   if (!patch.status && !status) return patch;
   const effectiveStatus = patch.status ?? status;
 
@@ -1451,6 +1454,9 @@ export function issueService(db: Db) {
           and(
             eq(issues.id, id),
             inArray(issues.status, expectedStatuses),
+            // Respect scheduledFor: backlog issues scheduled for a future moment must not be
+            // promoted to in_progress until the tick transitions them to todo.
+            or(isNull(issues.scheduledFor), lte(issues.scheduledFor, now)),
             or(isNull(issues.assigneeAgentId), sameRunAssigneeCondition),
             executionLockCondition,
           ),
