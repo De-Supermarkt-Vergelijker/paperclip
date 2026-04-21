@@ -57,11 +57,18 @@ function assertTransition(from: string, to: string) {
 
 function applyScheduledForAutoBacklog(
   patch: Partial<typeof issues.$inferInsert>,
-  existingStatus?: string,
+  existing?: Pick<typeof issues.$inferSelect, "status" | "scheduledFor">,
 ): void {
-  const effectiveStatus = patch.status ?? existingStatus;
-  const scheduledFor = patch.scheduledFor;
-  if (scheduledFor && effectiveStatus === "todo" && scheduledFor > new Date()) {
+  const effectiveStatus = patch.status ?? existing?.status;
+  // Fall back to the persisted scheduledFor when the patch doesn't touch it,
+  // so a PATCH { status: "todo" } without scheduledFor still honors a future schedule.
+  const effectiveScheduledFor =
+    patch.scheduledFor !== undefined ? patch.scheduledFor : existing?.scheduledFor;
+  if (
+    effectiveScheduledFor &&
+    effectiveStatus === "todo" &&
+    effectiveScheduledFor > new Date()
+  ) {
     patch.status = "backlog";
   }
 }
@@ -71,7 +78,7 @@ function applyStatusSideEffects(
   patch: Partial<typeof issues.$inferInsert>,
   existing?: typeof issues.$inferSelect,
 ): Partial<typeof issues.$inferInsert> {
-  applyScheduledForAutoBacklog(patch, existing?.status);
+  applyScheduledForAutoBacklog(patch, existing);
   if (!patch.status && !status) return patch;
   const effectiveStatus = patch.status ?? status;
 
@@ -1802,13 +1809,17 @@ export function issueService(db: Db) {
       }),
 
     checkout: async (id: string, agentId: string, expectedStatuses: string[], checkoutRunId: string | null) => {
-      const issueCompany = await db
-        .select({ companyId: issues.companyId })
+      const issueRow = await db
+        .select({
+          companyId: issues.companyId,
+          status: issues.status,
+          scheduledFor: issues.scheduledFor,
+        })
         .from(issues)
         .where(eq(issues.id, id))
         .then((rows) => rows[0] ?? null);
-      if (!issueCompany) throw notFound("Issue not found");
-      await assertAssignableAgent(issueCompany.companyId, agentId);
+      if (!issueRow) throw notFound("Issue not found");
+      await assertAssignableAgent(issueRow.companyId, agentId);
 
       const now = new Date();
 
@@ -1844,6 +1855,22 @@ export function issueService(db: Db) {
             );
         }
       });
+
+      // Refuse to promote a backlog issue whose schedule has not arrived yet.
+      // Without this check, checkout flips `backlog → in_progress` via direct
+      // `db.update` and bypasses the `tickScheduledIssues` cron entirely.
+      if (
+        issueRow.status === "backlog" &&
+        issueRow.scheduledFor &&
+        issueRow.scheduledFor > now
+      ) {
+        throw conflict("Issue scheduled for the future", {
+          issueId: id,
+          status: issueRow.status,
+          scheduledFor: issueRow.scheduledFor.toISOString(),
+          reason: "issue_scheduled_for_future",
+        });
+      }
 
       const sameRunAssigneeCondition = checkoutRunId
         ? and(

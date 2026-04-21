@@ -1298,3 +1298,186 @@ describeEmbeddedPostgres("issueService.findMentionedProjectIds", () => {
     ]);
   });
 });
+
+describeEmbeddedPostgres("issueService.update honors persisted scheduledFor", () => {
+  let db!: ReturnType<typeof createDb>;
+  let svc!: ReturnType<typeof issueService>;
+  let tempDb: Awaited<ReturnType<typeof startEmbeddedPostgresTestDatabase>> | null = null;
+
+  beforeAll(async () => {
+    tempDb = await startEmbeddedPostgresTestDatabase("paperclip-update-schedule-");
+    db = createDb(tempDb.connectionString);
+    svc = issueService(db);
+  }, 20_000);
+
+  afterEach(async () => {
+    await db.delete(issues);
+    await db.delete(companies);
+  });
+
+  afterAll(async () => {
+    await tempDb?.cleanup();
+  });
+
+  it("forces status back to backlog when patch sets todo on a future-scheduled issue without touching scheduledFor", async () => {
+    const companyId = randomUUID();
+    await db.insert(companies).values({
+      id: companyId,
+      name: "TestCo",
+      issuePrefix: `T${companyId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
+      requireBoardApprovalForNewAgents: false,
+    });
+
+    const future = new Date(Date.now() + 24 * 60 * 60 * 1000);
+    const issueId = randomUUID();
+    await db.insert(issues).values({
+      id: issueId,
+      companyId,
+      title: "Future-scheduled backlog",
+      status: "backlog",
+      priority: "medium",
+      scheduledFor: future,
+    });
+
+    const updated = await svc.update(issueId, { status: "todo" });
+
+    expect(updated).not.toBeNull();
+    expect(updated!.status).toBe("backlog");
+    const [row] = await db.select().from(issues).where(eq(issues.id, issueId));
+    expect(row?.status).toBe("backlog");
+  });
+
+  it("allows transition to todo once scheduledFor has passed even if patch omits scheduledFor", async () => {
+    const companyId = randomUUID();
+    await db.insert(companies).values({
+      id: companyId,
+      name: "TestCo",
+      issuePrefix: `T${companyId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
+      requireBoardApprovalForNewAgents: false,
+    });
+
+    const past = new Date(Date.now() - 60_000);
+    const issueId = randomUUID();
+    await db.insert(issues).values({
+      id: issueId,
+      companyId,
+      title: "Past-scheduled backlog",
+      status: "backlog",
+      priority: "medium",
+      scheduledFor: past,
+    });
+
+    const updated = await svc.update(issueId, { status: "todo" });
+
+    expect(updated).not.toBeNull();
+    expect(updated!.status).toBe("todo");
+  });
+});
+
+describeEmbeddedPostgres("issueService.checkout respects scheduledFor", () => {
+  let db!: ReturnType<typeof createDb>;
+  let svc!: ReturnType<typeof issueService>;
+  let tempDb: Awaited<ReturnType<typeof startEmbeddedPostgresTestDatabase>> | null = null;
+
+  beforeAll(async () => {
+    tempDb = await startEmbeddedPostgresTestDatabase("paperclip-checkout-schedule-");
+    db = createDb(tempDb.connectionString);
+    svc = issueService(db);
+  }, 20_000);
+
+  afterEach(async () => {
+    await db.delete(issues);
+    await db.delete(agents);
+    await db.delete(companies);
+  });
+
+  afterAll(async () => {
+    await tempDb?.cleanup();
+  });
+
+  async function setupCompanyAgent() {
+    const companyId = randomUUID();
+    const agentId = randomUUID();
+    await db.insert(companies).values({
+      id: companyId,
+      name: "TestCo",
+      issuePrefix: `T${companyId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
+      requireBoardApprovalForNewAgents: false,
+    });
+    await db.insert(agents).values({
+      id: agentId,
+      companyId,
+      name: "TestAgent",
+      role: "engineer",
+      status: "active",
+      adapterType: "codex_local",
+      adapterConfig: {},
+      runtimeConfig: {},
+      permissions: {},
+    });
+    return { companyId, agentId };
+  }
+
+  it("refuses to promote a backlog issue whose scheduledFor is still in the future", async () => {
+    const { companyId, agentId } = await setupCompanyAgent();
+    const future = new Date(Date.now() + 24 * 60 * 60 * 1000);
+    const issueId = randomUUID();
+    await db.insert(issues).values({
+      id: issueId,
+      companyId,
+      title: "Future-scheduled backlog",
+      status: "backlog",
+      priority: "medium",
+      scheduledFor: future,
+    });
+
+    await expect(
+      svc.checkout(issueId, agentId, ["todo", "backlog", "blocked"], null),
+    ).rejects.toMatchObject({
+      status: 409,
+      message: expect.stringMatching(/scheduled/i),
+    });
+
+    const [row] = await db.select().from(issues).where(eq(issues.id, issueId));
+    expect(row?.status).toBe("backlog");
+    expect(row?.assigneeAgentId).toBeNull();
+  });
+
+  it("allows checkout once scheduledFor has passed", async () => {
+    const { companyId, agentId } = await setupCompanyAgent();
+    const past = new Date(Date.now() - 60_000);
+    const issueId = randomUUID();
+    await db.insert(issues).values({
+      id: issueId,
+      companyId,
+      title: "Past-scheduled backlog",
+      status: "backlog",
+      priority: "medium",
+      scheduledFor: past,
+    });
+
+    const result = await svc.checkout(issueId, agentId, ["todo", "backlog", "blocked"], null);
+
+    expect(result).not.toBeNull();
+    expect(result!.status).toBe("in_progress");
+    expect(result!.assigneeAgentId).toBe(agentId);
+  });
+
+  it("allows checkout of a backlog issue without scheduledFor (no regression)", async () => {
+    const { companyId, agentId } = await setupCompanyAgent();
+    const issueId = randomUUID();
+    await db.insert(issues).values({
+      id: issueId,
+      companyId,
+      title: "Unscheduled backlog",
+      status: "backlog",
+      priority: "medium",
+    });
+
+    const result = await svc.checkout(issueId, agentId, ["todo", "backlog", "blocked"], null);
+
+    expect(result).not.toBeNull();
+    expect(result!.status).toBe("in_progress");
+    expect(result!.assigneeAgentId).toBe(agentId);
+  });
+});
