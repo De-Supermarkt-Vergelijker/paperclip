@@ -89,7 +89,6 @@ const PAPERCLIP_WAKE_PAYLOAD_KEY = "paperclipWake";
 const PAPERCLIP_HARNESS_CHECKOUT_KEY = "paperclipHarnessCheckedOut";
 const DETACHED_PROCESS_ERROR_CODE = "process_detached";
 const PROCESS_DETACHED_TIMEOUT_MS = 15 * 60 * 1000;
-const FOLLOWUP_DEDUP_WINDOW_MS = 10_000;
 const startLocksByAgent = new Map<string, Promise<void>>();
 const REPO_ONLY_CWD_SENTINEL = "/__paperclip_repo_only__";
 const MANAGED_WORKSPACE_GIT_CLONE_TIMEOUT_MS = 10 * 60 * 1000;
@@ -993,6 +992,15 @@ export function shouldResetTaskSessionForWake(
 ) {
   if (contextSnapshot?.forceFreshSession === true) return true;
 
+  const wakeReason = readNonEmptyString(contextSnapshot?.wakeReason);
+  if (
+    wakeReason === "execution_review_requested" ||
+    wakeReason === "execution_approval_requested" ||
+    wakeReason === "execution_changes_requested"
+  ) {
+    return true;
+  }
+
   const wakeSource = readNonEmptyString(contextSnapshot?.wakeSource);
   if (wakeSource === "timer") return true;
   return false;
@@ -1021,6 +1029,11 @@ function describeSessionResetReason(
   contextSnapshot: Record<string, unknown> | null | undefined,
 ) {
   if (contextSnapshot?.forceFreshSession === true) return "forceFreshSession was requested";
+
+  const wakeReason = readNonEmptyString(contextSnapshot?.wakeReason);
+  if (wakeReason === "execution_review_requested") return "wake reason is execution_review_requested";
+  if (wakeReason === "execution_approval_requested") return "wake reason is execution_approval_requested";
+  if (wakeReason === "execution_changes_requested") return "wake reason is execution_changes_requested";
 
   const wakeSource = readNonEmptyString(contextSnapshot?.wakeSource);
   if (wakeSource === "timer") return "wake source is timer (fresh session per timer heartbeat)";
@@ -1718,7 +1731,15 @@ export function heartbeatService(db: Db) {
       currentInstructionsHash !== latestRun.instructionsHashBefore
     ) {
       const reason = "agent instructions changed since last session run";
-      const latestSummary = summarizeHeartbeatRunResultJson(latestRun.resultJson);
+      const latestSummary = summarizeHeartbeatRunListResultJson({
+        summary: latestRun?.resultSummary,
+        result: latestRun?.resultResult,
+        message: latestRun?.resultMessage,
+        error: latestRun?.resultError,
+        totalCostUsd: latestRun?.resultTotalCostUsd,
+        costUsd: latestRun?.resultCostUsd,
+        costUsdCamel: latestRun?.resultCostUsdCamel,
+      });
       const latestTextSummary =
         readNonEmptyString(latestSummary?.summary) ??
         readNonEmptyString(latestSummary?.result) ??
@@ -4907,13 +4928,10 @@ export function heartbeatService(db: Db) {
             normalizeAgentNameKey(executionAgent?.name);
           const isSameExecutionAgent =
             Boolean(executionAgentNameKey) && executionAgentNameKey === agentNameKey;
-          const runTooRecentForFollowup =
-            (Date.now() - new Date(activeExecutionRun.createdAt).getTime()) < FOLLOWUP_DEDUP_WINDOW_MS;
           const shouldQueueFollowupForCommentWake =
             Boolean(wakeCommentId) &&
             activeExecutionRun.status === "running" &&
-            isSameExecutionAgent &&
-            !runTooRecentForFollowup;
+            isSameExecutionAgent;
 
           if (isSameExecutionAgent && !shouldQueueFollowupForCommentWake) {
             const mergedContextSnapshot = mergeCoalescedContextSnapshot(
@@ -5091,10 +5109,8 @@ export function heartbeatService(db: Db) {
     const sameScopeRunningRun = activeRuns.find(
       (candidate) => candidate.status === "running" && isSameTaskScope(runTaskKey(candidate), taskKey),
     );
-    const runTooRecentForFollowup = sameScopeRunningRun &&
-      (Date.now() - new Date(sameScopeRunningRun.createdAt).getTime()) < FOLLOWUP_DEDUP_WINDOW_MS;
     const shouldQueueFollowupForCommentWake =
-      Boolean(wakeCommentId) && Boolean(sameScopeRunningRun) && !sameScopeQueuedRun && !runTooRecentForFollowup;
+      Boolean(wakeCommentId) && Boolean(sameScopeRunningRun) && !sameScopeQueuedRun;
 
     const coalescedTargetRun =
       sameScopeQueuedRun ??
@@ -5213,10 +5229,8 @@ export function heartbeatService(db: Db) {
         .then((rows) => rows[0] ?? null);
 
       if (crossPathRun) {
-        const crossPathRunTooRecent =
-          (Date.now() - new Date(crossPathRun.createdAt).getTime()) < FOLLOWUP_DEDUP_WINDOW_MS;
         const skipForCommentFollowup =
-          crossPathRun.status === "running" && Boolean(wakeCommentId) && !crossPathRunTooRecent;
+          crossPathRun.status === "running" && Boolean(wakeCommentId);
 
         if (!skipForCommentFollowup) {
           const mergedContextSnapshot = mergeCoalescedContextSnapshot(

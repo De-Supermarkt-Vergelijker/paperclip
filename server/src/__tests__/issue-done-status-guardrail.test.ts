@@ -9,6 +9,7 @@ const mockIssueService = vi.hoisted(() => ({
   update: vi.fn(),
   addComment: vi.fn(),
   findMentionedAgents: vi.fn(),
+  listWakeableBlockedDependents: vi.fn(async () => []),
 }));
 
 const mockAccessService = vi.hoisted(() => ({

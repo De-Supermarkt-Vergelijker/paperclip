@@ -428,6 +428,7 @@ describe("optimistic issue comments", () => {
         completedAt: null,
         cancelledAt: null,
         hiddenAt: null,
+        scheduledFor: null,
         labelIds: ["label-1", "label-2"],
         labels: [
           {
@@ -600,6 +601,7 @@ describe("optimistic issue comments", () => {
         completedAt: null,
         cancelledAt: null,
         hiddenAt: null,
+        scheduledFor: null,
         labelIds: [],
         labels: [],
         blockedBy: [],
@@ -641,6 +643,7 @@ describe("optimistic issue comments", () => {
         completedAt: null,
         cancelledAt: null,
         hiddenAt: null,
+        scheduledFor: null,
         labelIds: [],
         labels: [],
         blockedBy: [],

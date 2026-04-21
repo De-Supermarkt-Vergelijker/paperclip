@@ -9,6 +9,7 @@ const mockIssueService = vi.hoisted(() => ({
   update: vi.fn(),
   addComment: vi.fn(),
   findMentionedAgents: vi.fn(),
+  listWakeableBlockedDependents: vi.fn(async () => []),
 }));
 
 const mockAccessService = vi.hoisted(() => ({
@@ -26,6 +27,10 @@ const mockHeartbeatService = vi.hoisted(() => ({
 
 const mockAgentService = vi.hoisted(() => ({
   getById: vi.fn(),
+  resolveByReference: vi.fn(async (_companyId: string, ref: string) => ({
+    agent: { id: ref },
+    ambiguous: false,
+  })),
 }));
 
 const mockLogActivity = vi.hoisted(() => vi.fn(async () => undefined));
