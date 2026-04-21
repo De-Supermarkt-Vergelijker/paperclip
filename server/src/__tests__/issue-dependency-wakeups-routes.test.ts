@@ -13,6 +13,7 @@ const mockIssueService = vi.hoisted(() => ({
   update: vi.fn(),
   listWakeableBlockedDependents: vi.fn(),
   getWakeableParentAfterChildCompletion: vi.fn(),
+  getWakeableParentForChildEvent: vi.fn(async () => null),
   findMentionedAgents: vi.fn(async () => []),
 }));
 
@@ -97,6 +98,7 @@ describe("issue dependency wakeups in issue routes", () => {
     mockIssueService.getRelationSummaries.mockResolvedValue({ blockedBy: [], blocks: [] });
     mockIssueService.listWakeableBlockedDependents.mockResolvedValue([]);
     mockIssueService.getWakeableParentAfterChildCompletion.mockResolvedValue(null);
+    mockIssueService.getWakeableParentForChildEvent.mockResolvedValue(null);
   });
 
   it("wakes dependents when the final blocker transitions to done", async () => {

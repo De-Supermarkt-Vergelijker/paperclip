@@ -1385,6 +1385,42 @@ export function issueRoutes(
       requestedByActorId: actor.actorId,
     });
 
+    if (issue.parentId) {
+      const parentIdForWake = issue.parentId;
+      void (async () => {
+        try {
+          const parentInfo = await svc.getWakeableParentForChildEvent(parentIdForWake);
+          if (parentInfo && parentInfo.assigneeAgentId !== issue.assigneeAgentId) {
+            await heartbeat.wakeup(parentInfo.assigneeAgentId, {
+              source: "automation",
+              triggerDetail: "system",
+              reason: "issue_child_created",
+              payload: {
+                issueId: parentInfo.id,
+                childIssueId: issue.id,
+                childIdentifier: issue.identifier,
+                childStatus: issue.status,
+                childAssigneeAgentId: issue.assigneeAgentId,
+              },
+              requestedByActorType: actor.actorType,
+              requestedByActorId: actor.actorId,
+              contextSnapshot: {
+                issueId: parentInfo.id,
+                taskId: parentInfo.id,
+                wakeReason: "issue_child_created",
+                source: "issue.child_event",
+                childIssueId: issue.id,
+                childIdentifier: issue.identifier,
+                childStatus: issue.status,
+              },
+            });
+          }
+        } catch (err) {
+          logger.warn({ err, parentId: parentIdForWake, childId: issue.id }, "failed to wake parent assignee on child creation");
+        }
+      })();
+    }
+
     res.status(201).json(issue);
   });
 
@@ -2008,6 +2044,57 @@ export function issueRoutes(
               source: "issue.children_completed",
               completedChildIssueId: issue.id,
               childIssueIds: parent.childIssueIds,
+            },
+          });
+        }
+      }
+
+      // Per-child status propagation to parent assignee. Fires on individual child
+      // transitions (in_progress, in_review, blocked, done, cancelled) so the parent
+      // agent gets visibility on each sub-issue event, not just when every child is
+      // terminal (which is what issue_children_completed above already covers).
+      // Complements issue_children_completed: that is the gate-reached event; this
+      // is the per-event propagation event. Both fire on the last-child completion
+      // but carry different semantics.
+      const childEventReasonByStatus: Record<string, string> = {
+        in_progress: "issue_child_in_progress",
+        in_review: "issue_child_in_review",
+        blocked: "issue_child_blocked",
+        done: "issue_child_done",
+        cancelled: "issue_child_cancelled",
+      };
+      const childStatusTransitioned = existing.status !== issue.status;
+      const childEventReason = childEventReasonByStatus[issue.status];
+      if (childStatusTransitioned && childEventReason && issue.parentId) {
+        const parent = await svc.getWakeableParentForChildEvent(issue.parentId);
+        // Skip when parent assignee is also the child assignee (they already got
+        // their own status-change wake; avoid duplicate wake).
+        if (parent && parent.assigneeAgentId !== issue.assigneeAgentId) {
+          addWakeup(parent.assigneeAgentId, {
+            source: "automation",
+            triggerDetail: "system",
+            reason: childEventReason,
+            payload: {
+              issueId: parent.id,
+              childIssueId: issue.id,
+              childIdentifier: issue.identifier,
+              childStatus: issue.status,
+              childAssigneeAgentId: issue.assigneeAgentId,
+              transitionFrom: existing.status,
+              transitionTo: issue.status,
+            },
+            requestedByActorType: actor.actorType,
+            requestedByActorId: actor.actorId,
+            contextSnapshot: {
+              issueId: parent.id,
+              taskId: parent.id,
+              wakeReason: childEventReason,
+              source: "issue.child_event",
+              childIssueId: issue.id,
+              childIdentifier: issue.identifier,
+              childStatus: issue.status,
+              transitionFrom: existing.status,
+              transitionTo: issue.status,
             },
           });
         }

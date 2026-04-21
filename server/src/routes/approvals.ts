@@ -13,6 +13,7 @@ import {
   approvalService,
   heartbeatService,
   issueApprovalService,
+  issueService,
   logActivity,
   secretService,
 } from "../services/index.js";
@@ -31,6 +32,7 @@ export function approvalRoutes(db: Db) {
   const svc = approvalService(db);
   const heartbeat = heartbeatService(db);
   const issueApprovalsSvc = issueApprovalService(db);
+  const issuesSvc = issueService(db);
   const secretsSvc = secretService(db);
   const strictSecretsMode = process.env.PAPERCLIP_SECRETS_STRICT_MODE === "true";
 
@@ -111,6 +113,55 @@ export function approvalRoutes(db: Db) {
       entityId: approval.id,
       details: { type: approval.type, issueIds: uniqueIssueIds },
     });
+
+    // Wake each linked child issue's parent assignee so the parent gets visibility
+    // on the pending board-approval gate — one of the 7 transitions tracked by
+    // this feature. Fire-and-forget; never block the approval response.
+    if (uniqueIssueIds.length > 0) {
+      void (async () => {
+        const seen = new Set<string>();
+        for (const linkedIssueId of uniqueIssueIds) {
+          try {
+            const linked = await issuesSvc.getById(linkedIssueId);
+            if (!linked?.parentId) continue;
+            const parentInfo = await issuesSvc.getWakeableParentForChildEvent(linked.parentId);
+            if (!parentInfo) continue;
+            if (parentInfo.assigneeAgentId === linked.assigneeAgentId) continue;
+            const dedupKey = `${parentInfo.assigneeAgentId}:${parentInfo.id}`;
+            if (seen.has(dedupKey)) continue;
+            seen.add(dedupKey);
+            await heartbeat.wakeup(parentInfo.assigneeAgentId, {
+              source: "automation",
+              triggerDetail: "system",
+              reason: "issue_child_approval_pending",
+              payload: {
+                issueId: parentInfo.id,
+                childIssueId: linked.id,
+                childIdentifier: linked.identifier,
+                approvalId: approval.id,
+                approvalType: approval.type,
+              },
+              requestedByActorType: actor.actorType,
+              requestedByActorId: actor.actorId,
+              contextSnapshot: {
+                issueId: parentInfo.id,
+                taskId: parentInfo.id,
+                wakeReason: "issue_child_approval_pending",
+                source: "approval.created",
+                childIssueId: linked.id,
+                childIdentifier: linked.identifier,
+                approvalId: approval.id,
+              },
+            });
+          } catch (err) {
+            logger.warn(
+              { err, approvalId: approval.id, linkedIssueId },
+              "failed to wake parent assignee on child approval creation",
+            );
+          }
+        }
+      })();
+    }
 
     res.status(201).json(redactApprovalPayload(approval));
   });
