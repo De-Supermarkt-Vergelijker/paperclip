@@ -1173,6 +1173,11 @@ export const MarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>
         ref={setEditorRef}
         markdown={editorValue}
         placeholder={placeholder}
+        // Disable mdxJsx / mdxMd / comment extensions. We don't use JSX in
+        // descriptions, and micromark-extension-mdx-jsx throws a VFileMessage
+        // on patterns like `<5%` or `<!-- -->` that escapes MDXEditor's
+        // onError channel, leaving the editor silently empty.
+        suppressHtmlProcessing
         onChange={(next) => {
           const echo = echoIgnoreMarkdownRef.current;
           if (echo !== null && next === echo) {
