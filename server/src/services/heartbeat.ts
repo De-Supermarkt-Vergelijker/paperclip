@@ -95,6 +95,15 @@ const MANAGED_WORKSPACE_GIT_CLONE_TIMEOUT_MS = 10 * 60 * 1000;
 const MAX_INLINE_WAKE_COMMENTS = 8;
 const MAX_INLINE_WAKE_COMMENT_BODY_CHARS = 4_000;
 const MAX_INLINE_WAKE_COMMENT_BODY_TOTAL_CHARS = 12_000;
+// Queue-delay threshold above which a dispatch-time re-query of the issue's
+// comment stream kicks in. Enqueue-time snapshots of PAPERCLIP_WAKE_PAYLOAD_JSON
+// go stale when the run waits long enough for a new comment to land; at that
+// point the agent wakes up with a batch that predates the reason they were woken.
+// 30s gives safety margin against the ~9min delay observed in AIU-491 while
+// keeping the extra DB round-trip rare on hot queues. (AIU-513)
+const WAKE_PAYLOAD_REFRESH_THRESHOLD_MS = 30_000;
+const PAPERCLIP_SESSION_STATE_KEY = "paperclipSessionState";
+const PAPERCLIP_SESSION_STATE_STALE = "stale";
 const execFile = promisify(execFileCallback);
 const ACTIVE_HEARTBEAT_RUN_STATUSES = ["queued", "running"] as const;
 const SESSIONED_LOCAL_ADAPTERS = new Set([
@@ -1219,9 +1228,22 @@ async function buildPaperclipWakePayload(input: {
         priority: string;
       }
     | null;
+  // Comment ids discovered at dispatch time (see refreshWakePayloadCommentIds).
+  // Appended after the enqueue-time batch so the wake payload reflects
+  // state that landed while the run was queued. (AIU-513)
+  additionalCommentIds?: string[];
 }) {
   const executionStage = parseObject(input.contextSnapshot.executionStage);
-  const commentIds = extractWakeCommentIds(input.contextSnapshot);
+  const snapshotCommentIds = extractWakeCommentIds(input.contextSnapshot);
+  const commentIds: string[] = [...snapshotCommentIds];
+  if (input.additionalCommentIds) {
+    const seen = new Set(commentIds);
+    for (const id of input.additionalCommentIds) {
+      if (typeof id !== "string" || id.length === 0 || seen.has(id)) continue;
+      seen.add(id);
+      commentIds.push(id);
+    }
+  }
   const issueId = readNonEmptyString(input.contextSnapshot.issueId);
   const issueSummary =
     input.issueSummary ??
@@ -1327,6 +1349,100 @@ async function buildPaperclipWakePayload(input: {
     },
     truncated,
     fallbackFetchNeeded: truncated || missingCommentCount > 0,
+  };
+}
+
+export interface WakePayloadRefreshResult {
+  /** Comment ids that landed after enqueue and are not yet in the snapshot batch. */
+  additionalCommentIds: string[];
+  /** True when the queue-delay + new-comment condition indicates the agent's
+   *  resumed Claude session context is older than the issue's current state. */
+  sessionIsStale: boolean;
+  /** Number of comments already in the enqueue-time snapshot batch. */
+  snapshotCommentCount: number;
+  /** Queue delay in milliseconds (enqueue → dispatch). */
+  queueDelayMs: number;
+  /** Whether the refresh actually ran (queue-delay exceeded the threshold). */
+  refreshAttempted: boolean;
+}
+
+export async function refreshWakePayloadCommentIds(input: {
+  db: Db;
+  companyId: string;
+  issueId: string | null;
+  contextSnapshot: Record<string, unknown>;
+  queueDelayMs: number;
+  thresholdMs?: number;
+}): Promise<WakePayloadRefreshResult> {
+  const threshold = input.thresholdMs ?? WAKE_PAYLOAD_REFRESH_THRESHOLD_MS;
+  const snapshotCommentIds = extractWakeCommentIds(input.contextSnapshot);
+  const base: WakePayloadRefreshResult = {
+    additionalCommentIds: [],
+    sessionIsStale: false,
+    snapshotCommentCount: snapshotCommentIds.length,
+    queueDelayMs: input.queueDelayMs,
+    refreshAttempted: false,
+  };
+
+  // Only refresh when:
+  //   (a) queue delay exceeds the threshold (recent queues don't drift), and
+  //   (b) we have an issue to query against, and
+  //   (c) the enqueue-time batch had comments at all. A timer wake without
+  //       commentIds has nothing to "become stale" — we don't want to invent
+  //       a batch from history.
+  if (
+    !input.issueId ||
+    input.queueDelayMs <= threshold ||
+    snapshotCommentIds.length === 0
+  ) {
+    return base;
+  }
+
+  // Find the newest createdAt among the comments already carried by the
+  // enqueue-time snapshot — that's the watermark for "what landed after".
+  const existingRows = await input.db
+    .select({ id: issueComments.id, createdAt: issueComments.createdAt })
+    .from(issueComments)
+    .where(
+      and(
+        eq(issueComments.companyId, input.companyId),
+        inArray(issueComments.id, snapshotCommentIds),
+      ),
+    );
+  let watermark: Date | null = null;
+  for (const row of existingRows) {
+    if (!watermark || row.createdAt > watermark) watermark = row.createdAt;
+  }
+  // Guard: if none of the snapshot ids resolve (edge case: comments deleted
+  // between enqueue and dispatch), skip the refresh — we can't compute a
+  // reliable watermark and returning historical comments would be wrong.
+  if (!watermark) return base;
+
+  const newerRows = await input.db
+    .select({ id: issueComments.id, createdAt: issueComments.createdAt })
+    .from(issueComments)
+    .where(
+      and(
+        eq(issueComments.companyId, input.companyId),
+        eq(issueComments.issueId, input.issueId),
+        gt(issueComments.createdAt, watermark),
+      ),
+    )
+    .orderBy(asc(issueComments.createdAt));
+
+  const existing = new Set(snapshotCommentIds);
+  const additional: string[] = [];
+  for (const row of newerRows) {
+    if (existing.has(row.id)) continue;
+    additional.push(row.id);
+  }
+
+  return {
+    additionalCommentIds: additional,
+    sessionIsStale: additional.length > 0,
+    snapshotCommentCount: snapshotCommentIds.length,
+    queueDelayMs: input.queueDelayMs,
+    refreshAttempted: true,
   };
 }
 
@@ -3561,10 +3677,37 @@ export function heartbeatService(db: Db) {
           executionWorkspacePreference: issueContext.executionWorkspacePreference,
         }
       : null;
+    // Dispatch-time wake-payload refresh. PAPERCLIP_WAKE_PAYLOAD_JSON is
+    // otherwise frozen at enqueue-time (via contextSnapshot.wakeCommentIds);
+    // if the run sat in the queue long enough for new comments to land the
+    // agent wakes with a batch that predates the reason it was triggered.
+    // We also surface a session-stale signal so resumed Claude sessions know
+    // to bypass their cached "already-handled" context. (AIU-511 / AIU-513)
+    const queueDelayMs = Math.max(0, Date.now() - run.createdAt.getTime());
+    const wakeRefresh = await refreshWakePayloadCommentIds({
+      db,
+      companyId: agent.companyId,
+      issueId: issueRef?.id ?? issueId ?? null,
+      contextSnapshot: context,
+      queueDelayMs,
+    });
+    if (wakeRefresh.additionalCommentIds.length > 0) {
+      logger.info(
+        {
+          runId: run.id,
+          issueId: issueRef?.id ?? issueId ?? null,
+          queueDelayMs,
+          snapshotCommentCount: wakeRefresh.snapshotCommentCount,
+          newCommentCount: wakeRefresh.additionalCommentIds.length,
+        },
+        "heartbeat.wake.payload_refreshed",
+      );
+    }
     const paperclipWakePayload = await buildPaperclipWakePayload({
       db,
       companyId: agent.companyId,
       contextSnapshot: context,
+      additionalCommentIds: wakeRefresh.additionalCommentIds,
       issueSummary: issueRef
         ? {
             id: issueRef.id,
@@ -3579,6 +3722,11 @@ export function heartbeatService(db: Db) {
       context[PAPERCLIP_WAKE_PAYLOAD_KEY] = paperclipWakePayload;
     } else {
       delete context[PAPERCLIP_WAKE_PAYLOAD_KEY];
+    }
+    if (wakeRefresh.sessionIsStale) {
+      context[PAPERCLIP_SESSION_STATE_KEY] = PAPERCLIP_SESSION_STATE_STALE;
+    } else {
+      delete context[PAPERCLIP_SESSION_STATE_KEY];
     }
     const existingExecutionWorkspace =
       issueRef?.executionWorkspaceId ? await executionWorkspacesSvc.getById(issueRef.executionWorkspaceId) : null;
