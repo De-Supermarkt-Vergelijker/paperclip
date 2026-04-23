@@ -69,6 +69,8 @@ pnpm paperclipai allowed-hostname dotta-macbook-pro
 
 For full setup and troubleshooting, see [Tailscale Private Access](/deploy/tailscale-private-access).
 
+If you're accessing the dev server from a remote browser (reverse proxy, SSH tunnel, VPN other than Tailscale) and want to know which ports must be reachable — especially for hot-reload — see [Remote Access and Bind Model](/deploy/remote-access).
+
 ## Health Checks
 
 ```sh
