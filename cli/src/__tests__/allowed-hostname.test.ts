@@ -3,7 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import type { PaperclipConfig } from "../config/schema.js";
-import { addAllowedHostname } from "../commands/allowed-hostname.js";
+import { addAllowedHostname, isPrivateHostnameGuardActive } from "../commands/allowed-hostname.js";
 
 function createTempConfigPath() {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "paperclip-allowed-hostname-"));
@@ -76,5 +76,27 @@ describe("allowed-hostname command", () => {
 
     const raw = JSON.parse(fs.readFileSync(configPath, "utf-8")) as PaperclipConfig;
     expect(raw.server.allowedHostnames).toEqual(["dotta-macbook-pro"]);
+  });
+});
+
+describe("isPrivateHostnameGuardActive", () => {
+  function configWith(deploymentMode: "local_trusted" | "authenticated", exposure: "private" | "public") {
+    return { server: { deploymentMode, exposure } };
+  }
+
+  it("activates for authenticated/private", () => {
+    expect(isPrivateHostnameGuardActive(configWith("authenticated", "private"))).toBe(true);
+  });
+
+  it("activates for local_trusted/private", () => {
+    expect(isPrivateHostnameGuardActive(configWith("local_trusted", "private"))).toBe(true);
+  });
+
+  it("does not activate for authenticated/public", () => {
+    expect(isPrivateHostnameGuardActive(configWith("authenticated", "public"))).toBe(false);
+  });
+
+  it("does not activate for local_trusted/public", () => {
+    expect(isPrivateHostnameGuardActive(configWith("local_trusted", "public"))).toBe(false);
   });
 });
