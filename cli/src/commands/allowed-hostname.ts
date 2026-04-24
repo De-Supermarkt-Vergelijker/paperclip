@@ -3,6 +3,17 @@ import pc from "picocolors";
 import { normalizeHostnameInput } from "../config/hostnames.js";
 import { readConfig, resolveConfigPath, writeConfig } from "../config/store.js";
 
+// Mirrors shouldEnablePrivateHostnameGuard in server/src/app.ts — must stay in sync.
+export function isPrivateHostnameGuardActive(config: {
+  server: { deploymentMode: string; exposure: string };
+}): boolean {
+  return (
+    config.server.exposure === "private" &&
+    (config.server.deploymentMode === "local_trusted" ||
+      config.server.deploymentMode === "authenticated")
+  );
+}
+
 export async function addAllowedHostname(host: string, opts: { config?: string }): Promise<void> {
   const configPath = resolveConfigPath(opts.config);
   const config = readConfig(opts.config);
@@ -31,9 +42,9 @@ export async function addAllowedHostname(host: string, opts: { config?: string }
     );
   }
 
-  if (!(config.server.deploymentMode === "authenticated" && config.server.exposure === "private")) {
+  if (!isPrivateHostnameGuardActive(config)) {
     p.log.message(
-      pc.dim("Note: allowed hostnames are enforced only in authenticated/private mode."),
+      pc.dim("Note: allowed hostnames are enforced only when exposure is private (authenticated or local_trusted mode)."),
     );
   }
 }
