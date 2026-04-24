@@ -172,6 +172,10 @@ async function buildClaudeRuntimeConfig(input: ClaudeExecutionInput): Promise<Cl
     ? context.issueIds.filter((value): value is string => typeof value === "string" && value.trim().length > 0)
     : [];
   const wakePayloadJson = stringifyPaperclipWakePayload(context.paperclipWake);
+  const sessionState =
+    typeof context.paperclipSessionState === "string" && context.paperclipSessionState.trim().length > 0
+      ? context.paperclipSessionState.trim()
+      : null;
 
   if (wakeTaskId) {
     env.PAPERCLIP_TASK_ID = wakeTaskId;
@@ -193,6 +197,14 @@ async function buildClaudeRuntimeConfig(input: ClaudeExecutionInput): Promise<Cl
   }
   if (wakePayloadJson) {
     env.PAPERCLIP_WAKE_PAYLOAD_JSON = wakePayloadJson;
+  }
+  if (sessionState) {
+    // Signal to the agent that its resumed Claude Code session may be
+    // holding stale context from a previous wake: the issue has progressed
+    // (new comments landed) while this run waited in the queue. Paired with
+    // CLAUDE.md §37 so agents cross-check against a fresh API fetch before
+    // acting on session memory. (AIU-513)
+    env.PAPERCLIP_SESSION_STATE = sessionState;
   }
   applyPaperclipWorkspaceEnv(env, {
     workspaceCwd: effectiveWorkspaceCwd,
