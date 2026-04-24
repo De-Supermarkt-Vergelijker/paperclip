@@ -89,6 +89,43 @@ export function normalizeIssueExecutionPolicy(input: unknown): IssueExecutionPol
   };
 }
 
+export function buildAutoAttachedApprovalPolicy(params: {
+  creator: { agentId?: string | null; userId?: string | null };
+  assigneeAgentId?: string | null;
+  assigneeUserId?: string | null;
+}): IssueExecutionPolicy | null {
+  const creator = actorPrincipal(params.creator);
+  if (!creator) return null;
+
+  const assignee = assigneePrincipal({
+    assigneeAgentId: params.assigneeAgentId ?? null,
+    assigneeUserId: params.assigneeUserId ?? null,
+  });
+  if (!assignee) return null;
+
+  if (principalsEqual(creator, assignee)) return null;
+
+  return {
+    mode: "normal",
+    commentRequired: true,
+    stages: [
+      {
+        id: randomUUID(),
+        type: "approval",
+        approvalsNeeded: 1,
+        participants: [
+          {
+            id: randomUUID(),
+            type: creator.type,
+            agentId: creator.type === "agent" ? creator.agentId ?? null : null,
+            userId: creator.type === "user" ? creator.userId ?? null : null,
+          },
+        ],
+      },
+    ],
+  };
+}
+
 export function parseIssueExecutionState(input: unknown): IssueExecutionState | null {
   if (input == null) return null;
   const parsed = issueExecutionStateSchema.safeParse(input);
