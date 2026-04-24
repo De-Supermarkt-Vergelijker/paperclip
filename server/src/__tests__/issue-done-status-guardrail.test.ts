@@ -192,6 +192,23 @@ describe("done-status guardrail", () => {
     expect(mockIssueService.update).toHaveBeenCalled();
   });
 
+  it("allows agent to set done on routine-execution issue (creator=null)", async () => {
+    mockIssueService.getById.mockResolvedValue(
+      makeIssue({ createdByAgentId: null, originKind: "routine_execution" }),
+    );
+    mockIssueService.update.mockImplementation(async (_id: string, patch: Record<string, unknown>) => ({
+      ...makeIssue({ createdByAgentId: null, originKind: "routine_execution" }),
+      ...patch,
+    }));
+
+    const res = await request(createApp(agentActor(AGENT_A)))
+      .patch(`/api/issues/${ISSUE_ID}`)
+      .send({ status: "done" });
+
+    expect(res.status).toBe(200);
+    expect(mockIssueService.update).toHaveBeenCalled();
+  });
+
   it("allows non-creator agent to set status to in_review (not blocked)", async () => {
     mockIssueService.getById.mockResolvedValue(makeIssue({ createdByAgentId: AGENT_A }));
     mockIssueService.update.mockImplementation(async (_id: string, patch: Record<string, unknown>) => ({
