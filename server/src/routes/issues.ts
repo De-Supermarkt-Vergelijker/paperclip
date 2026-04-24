@@ -62,6 +62,7 @@ import {
 import { queueIssueAssignmentWakeup } from "../services/issue-assignment-wakeup.js";
 import {
   applyIssueExecutionPolicyTransition,
+  buildAutoAttachedApprovalPolicy,
   normalizeIssueExecutionPolicy,
   parseIssueExecutionState,
 } from "../services/issue-execution-policy.js";
@@ -1335,7 +1336,18 @@ export function issueRoutes(
     }
 
     const actor = getActorInfo(req);
-    const executionPolicy = normalizeIssueExecutionPolicy(req.body.executionPolicy);
+    const executionPolicyProvided = req.body.executionPolicy !== undefined;
+    let executionPolicy = normalizeIssueExecutionPolicy(req.body.executionPolicy);
+    if (!executionPolicyProvided) {
+      executionPolicy = buildAutoAttachedApprovalPolicy({
+        creator: {
+          agentId: actor.agentId,
+          userId: actor.actorType === "user" ? actor.actorId : null,
+        },
+        assigneeAgentId: req.body.assigneeAgentId ?? null,
+        assigneeUserId: req.body.assigneeUserId ?? null,
+      });
+    }
     const { scheduledFor: scheduledForRaw, ...createBody } = req.body;
     const issue = await svc.create(companyId, {
       ...createBody,
