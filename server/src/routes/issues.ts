@@ -1480,9 +1480,17 @@ export function issueRoutes(
     // Platform guardrail: only creator/delegator can set status to "done" (board users exempt).
     // Routine-execution issues have createdByAgentId=null (system-created), so they are exempt
     // — any agent (typically the routine owner) may close them.
+    // Issues with an executionPolicy attached are also exempt — the runtime
+    // (applyIssueExecutionPolicyTransition below) intercepts the done-transition and
+    // routes it through the configured review/approval stages.
     if (updateFields.status === "done" && req.actor.type === "agent") {
       const isRoutineExecution = existing.originKind === "routine_execution";
-      if (!isRoutineExecution && req.actor.agentId !== existing.createdByAgentId) {
+      const hasExecutionPolicy = !!existing.executionPolicy;
+      if (
+        !isRoutineExecution &&
+        !hasExecutionPolicy &&
+        req.actor.agentId !== existing.createdByAgentId
+      ) {
         res.status(422).json({
           error: "Only the creator/delegator can close this task. Use in_review instead.",
           code: "DONE_NOT_CREATOR",
