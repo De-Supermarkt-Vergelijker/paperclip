@@ -1476,29 +1476,6 @@ export function issueRoutes(
     if (commentBody && effectiveReopenRequested && isClosed && updateFields.status === undefined) {
       updateFields.status = "todo";
     }
-
-    // Platform guardrail: only creator/delegator can set status to "done" (board users exempt).
-    // Routine-execution issues have createdByAgentId=null (system-created), so they are exempt
-    // — any agent (typically the routine owner) may close them.
-    // Issues with an executionPolicy attached are also exempt — the runtime
-    // (applyIssueExecutionPolicyTransition below) intercepts the done-transition and
-    // routes it through the configured review/approval stages.
-    if (updateFields.status === "done" && req.actor.type === "agent") {
-      const isRoutineExecution = existing.originKind === "routine_execution";
-      const hasExecutionPolicy = !!existing.executionPolicy;
-      if (
-        !isRoutineExecution &&
-        !hasExecutionPolicy &&
-        req.actor.agentId !== existing.createdByAgentId
-      ) {
-        res.status(422).json({
-          error: "Only the creator/delegator can close this task. Use in_review instead.",
-          code: "DONE_NOT_CREATOR",
-        });
-        return;
-      }
-    }
-
     if (req.body.executionPolicy !== undefined) {
       updateFields.executionPolicy = normalizeIssueExecutionPolicy(req.body.executionPolicy);
     }
@@ -1800,8 +1777,9 @@ export function issueRoutes(
 
     }
 
-    // Diff pre/post update so auto-reassign via applyStatusSideEffects also
-    // triggers a wake (body-only assigneeWillChange misses that path).
+    // Diff pre/post update so server-side assignee mutations (e.g.
+    // execution-policy stage transitions) also trigger a wake — body-only
+    // assigneeWillChange misses any path that doesn't go through req.body.
     const assigneeChanged =
       issue.assigneeAgentId !== existing.assigneeAgentId || issue.assigneeUserId !== existing.assigneeUserId;
     const statusChangedFromBacklog =

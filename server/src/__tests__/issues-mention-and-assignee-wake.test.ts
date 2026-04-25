@@ -148,10 +148,11 @@ describe("issue PATCH wake emission", () => {
     mockIssueService.findMentionedAgents.mockResolvedValue([]);
   });
 
-  it("wakes the newly-assigned agent when applyStatusSideEffects auto-reassigns on in_review", async () => {
-    // PATCH body only contains `status: in_review`; applyStatusSideEffects
-    // rewrites assigneeAgentId server-side. The wake gate must notice this
-    // via the pre/post delta, not the request body.
+  it("wakes the newly-assigned agent when a server-side side-effect changes the assignee", async () => {
+    // PATCH body only contains `status: in_review`; the service mock returns a
+    // different assigneeAgentId, simulating any server-side reassignment path
+    // (e.g. an execution-policy stage transition). The wake gate must notice
+    // this via the pre/post delta, not the request body.
     mockIssueService.getById.mockResolvedValue(makeIssue({ assigneeAgentId: WORKER }));
     mockIssueService.update.mockImplementation(async (_id: string) =>
       makeIssue({ status: "in_review", assigneeAgentId: CREATOR }),
