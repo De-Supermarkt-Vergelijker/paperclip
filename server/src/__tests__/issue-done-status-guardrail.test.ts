@@ -223,4 +223,70 @@ describe("done-status guardrail", () => {
     expect(res.status).toBe(200);
     expect(mockIssueService.update).toHaveBeenCalled();
   });
+
+  it("allows non-creator agent to set status to done when issue has executionPolicy (runtime intercepts)", async () => {
+    const STAGE_ID = "00000000-0000-4000-8000-000000000001";
+    const PARTICIPANT_ID = "00000000-0000-4000-8000-000000000002";
+    const policy = {
+      mode: "normal" as const,
+      commentRequired: true,
+      stages: [
+        {
+          id: STAGE_ID,
+          type: "approval" as const,
+          approvalsNeeded: 1 as const,
+          participants: [
+            { id: PARTICIPANT_ID, type: "agent" as const, agentId: AGENT_A, userId: null },
+          ],
+        },
+      ],
+    };
+    mockIssueService.getById.mockResolvedValue(
+      makeIssue({
+        createdByAgentId: AGENT_A,
+        assigneeAgentId: AGENT_B,
+        executionPolicy: policy,
+        executionState: null,
+      }),
+    );
+    mockIssueService.update.mockImplementation(async (_id: string, patch: Record<string, unknown>) => ({
+      ...makeIssue({
+        createdByAgentId: AGENT_A,
+        assigneeAgentId: AGENT_B,
+        executionPolicy: policy,
+      }),
+      ...patch,
+    }));
+
+    const res = await request(createApp(agentActor(AGENT_B)))
+      .patch(`/api/issues/${ISSUE_ID}`)
+      .send({ status: "done" });
+
+    expect(res.status).toBe(200);
+    expect(mockIssueService.update).toHaveBeenCalled();
+    const patch = mockIssueService.update.mock.calls[0]?.[1] as Record<string, unknown>;
+    expect(patch.status).toBe("in_review");
+    expect(patch.assigneeAgentId).toBe(AGENT_A);
+    const state = patch.executionState as Record<string, unknown> | null;
+    expect(state).not.toBeNull();
+    expect(state?.currentStageId).toBe(STAGE_ID);
+    expect(state?.currentStageType).toBe("approval");
+    expect(state?.currentParticipant).toMatchObject({ type: "agent", agentId: AGENT_A });
+    expect(state?.returnAssignee).toMatchObject({ type: "agent", agentId: AGENT_B });
+    expect(state?.status).toBe("pending");
+  });
+
+  it("still blocks non-creator agent when executionPolicy is explicitly null (opt-out preserves guardrail)", async () => {
+    mockIssueService.getById.mockResolvedValue(
+      makeIssue({ createdByAgentId: AGENT_A, executionPolicy: null }),
+    );
+
+    const res = await request(createApp(agentActor(AGENT_B)))
+      .patch(`/api/issues/${ISSUE_ID}`)
+      .send({ status: "done" });
+
+    expect(res.status).toBe(422);
+    expect(res.body.code).toBe("DONE_NOT_CREATOR");
+    expect(mockIssueService.update).not.toHaveBeenCalled();
+  });
 });
