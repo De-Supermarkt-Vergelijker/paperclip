@@ -1414,6 +1414,29 @@ export function issueService(db: Db) {
         }));
     },
 
+    getWakeableParentForChildEvent: async (parentIssueId: string) => {
+      const parent = await db
+        .select({
+          id: issues.id,
+          identifier: issues.identifier,
+          assigneeAgentId: issues.assigneeAgentId,
+          status: issues.status,
+          companyId: issues.companyId,
+        })
+        .from(issues)
+        .where(eq(issues.id, parentIssueId))
+        .then((rows) => rows[0] ?? null);
+      if (!parent || !parent.assigneeAgentId || ["backlog", "done", "cancelled"].includes(parent.status)) {
+        return null;
+      }
+      return {
+        id: parent.id,
+        identifier: parent.identifier,
+        assigneeAgentId: parent.assigneeAgentId,
+        companyId: parent.companyId,
+      };
+    },
+
     getWakeableParentAfterChildCompletion: async (parentIssueId: string) => {
       const parent = await db
         .select({
