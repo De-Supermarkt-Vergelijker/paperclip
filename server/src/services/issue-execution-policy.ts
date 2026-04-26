@@ -478,16 +478,24 @@ export function applyIssueExecutionPolicyTransition(input: TransitionInput): Tra
       }
     }
 
-    const attemptedStageAdvance =
-      (requestedStatus !== undefined && requestedStatus !== "in_review") ||
-      (requestedAssigneePatchProvided && !principalsEqual(explicitAssignee, currentParticipant));
+    const attemptedStatusAdvance = requestedStatus !== undefined && requestedStatus !== "in_review";
+    const attemptedReassign =
+      requestedAssigneePatchProvided && !principalsEqual(explicitAssignee, currentParticipant);
     const stageStateDrifted =
       input.issue.status !== "in_review" ||
       !principalsEqual(currentAssignee, currentParticipant) ||
       !principalsEqual(existingState?.currentParticipant ?? null, currentParticipant);
 
-    if (attemptedStageAdvance && !stageStateDrifted) {
-      throw unprocessable("Only the active reviewer or approver can advance the current execution stage");
+    if ((attemptedStatusAdvance || attemptedReassign) && !stageStateDrifted) {
+      const actorIsActiveParticipant = principalsEqual(currentParticipant, actor);
+      if (actorIsActiveParticipant && attemptedReassign && !attemptedStatusAdvance) {
+        throw unprocessable(
+          "Re-assigning this issue is not allowed while you are the active reviewer/approver of the current stage. Use approve or request-changes to advance the stage, or remove yourself from the stage's participants first.",
+        );
+      }
+      throw unprocessable(
+        "Only the active reviewer or approver can advance the current execution stage",
+      );
     }
 
     if (stageStateDrifted) {

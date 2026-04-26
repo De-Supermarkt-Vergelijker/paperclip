@@ -25,12 +25,27 @@ export function assigneeValueFromSelection(selection: Partial<AssigneeSelection>
   return "";
 }
 
+export interface SuggestedCommentAssigneeOptions {
+  /**
+   * When true, the actor is the active reviewer/approver of the issue's currently
+   * pending execution stage. The backend rejects any assignee-PATCH that targets a
+   * different principal in that state, so the composer must NOT default to a "last
+   * commenter who isn't me" value — that would silently fire a rejected reassign on
+   * Send. Suppress the suggestion and stay on the current assignee.
+   */
+  actorIsStageGatekeeper?: boolean;
+}
+
 export function suggestedCommentAssigneeValue(
   issue: CommentAssigneeSuggestionInput,
   comments: CommentAssigneeSuggestionComment[] | null | undefined,
   currentUserId: string | null | undefined,
   currentAgentId?: string | null | undefined,
+  options?: SuggestedCommentAssigneeOptions,
 ): string {
+  if (options?.actorIsStageGatekeeper) {
+    return assigneeValueFromSelection(issue);
+  }
   if (comments && comments.length > 0 && (currentUserId || currentAgentId)) {
     for (let i = comments.length - 1; i >= 0; i--) {
       const comment = comments[i];
