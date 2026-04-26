@@ -17,6 +17,7 @@ import { useSidebar } from "../context/SidebarContext";
 import { useToastActions } from "../context/ToastContext";
 import { useBreadcrumbs } from "../context/BreadcrumbContext";
 import { assigneeValueFromSelection, suggestedCommentAssigneeValue } from "../lib/assignees";
+import { isActorActiveStageParticipant } from "../lib/issue-execution-policy";
 import { extractIssueTimelineEvents } from "../lib/issue-timeline-events";
 import { queryKeys } from "../lib/queryKeys";
 import { keepPreviousDataForSameQueryTail } from "../lib/query-placeholder-data";
@@ -1102,14 +1103,21 @@ export function IssueDetail() {
     [issue],
   );
 
+  const actorIsStageGatekeeper = useMemo(
+    () => isActorActiveStageParticipant(issue, { userId: currentUserId }),
+    [issue, currentUserId],
+  );
+
   const suggestedAssigneeValue = useMemo(
     () =>
       suggestedCommentAssigneeValue(
         issue ?? {},
         mergeIssueComments(comments ?? [], optimisticComments),
         currentUserId,
+        undefined,
+        { actorIsStageGatekeeper },
       ),
-    [issue, comments, optimisticComments, currentUserId],
+    [issue, comments, optimisticComments, currentUserId, actorIsStageGatekeeper],
   );
 
   const threadComments = useMemo(

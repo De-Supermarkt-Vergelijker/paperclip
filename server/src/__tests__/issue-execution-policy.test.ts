@@ -442,6 +442,68 @@ describe("issue execution policy transitions", () => {
       ).toThrow("Only the active reviewer or approver can advance");
     });
 
+    it("active approver attempting to reassign without advancing throws the active-approver-specific message", () => {
+      const approvalPolicy = approvalOnlyPolicy();
+      const approvalStageId = approvalPolicy.stages[0].id;
+      expect(() =>
+        applyIssueExecutionPolicyTransition({
+          issue: {
+            status: "in_review",
+            assigneeAgentId: null,
+            assigneeUserId: ctoUserId,
+            executionPolicy: approvalPolicy,
+            executionState: {
+              status: "pending",
+              currentStageId: approvalStageId,
+              currentStageIndex: 0,
+              currentStageType: "approval",
+              currentParticipant: { type: "user", userId: ctoUserId, agentId: null },
+              returnAssignee: { type: "agent", agentId: coderAgentId, userId: null },
+              completedStageIds: [],
+              lastDecisionId: null,
+              lastDecisionOutcome: null,
+            },
+          },
+          policy: approvalPolicy,
+          requestedStatus: undefined,
+          requestedAssigneePatch: { assigneeAgentId: ctoAgentId, assigneeUserId: null },
+          actor: { userId: ctoUserId },
+          commentBody: null,
+        }),
+      ).toThrow(/active reviewer\/approver of the current stage/);
+    });
+
+    it("non-active actor attempting to reassign keeps the generic advance-stage message", () => {
+      const approvalPolicy = approvalOnlyPolicy();
+      const approvalStageId = approvalPolicy.stages[0].id;
+      expect(() =>
+        applyIssueExecutionPolicyTransition({
+          issue: {
+            status: "in_review",
+            assigneeAgentId: null,
+            assigneeUserId: ctoUserId,
+            executionPolicy: approvalPolicy,
+            executionState: {
+              status: "pending",
+              currentStageId: approvalStageId,
+              currentStageIndex: 0,
+              currentStageType: "approval",
+              currentParticipant: { type: "user", userId: ctoUserId, agentId: null },
+              returnAssignee: { type: "agent", agentId: coderAgentId, userId: null },
+              completedStageIds: [],
+              lastDecisionId: null,
+              lastDecisionOutcome: null,
+            },
+          },
+          policy: approvalPolicy,
+          requestedStatus: undefined,
+          requestedAssigneePatch: { assigneeAgentId: ctoAgentId, assigneeUserId: null },
+          actor: { agentId: coderAgentId },
+          commentBody: null,
+        }),
+      ).toThrow("Only the active reviewer or approver can advance the current execution stage");
+    });
+
     it("non-participant can still post non-advancing updates", () => {
       const result = applyIssueExecutionPolicyTransition({
         issue: {

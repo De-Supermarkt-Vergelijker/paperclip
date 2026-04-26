@@ -89,4 +89,19 @@ describe("assignee selection helpers", () => {
       ),
     ).toBe("agent:agent-123");
   });
+
+  it("returns the current assignee when the actor is the active stage gatekeeper, ignoring commenter hints", () => {
+    expect(
+      suggestedCommentAssigneeValue(
+        { assigneeUserId: "board-user" },
+        [
+          { authorUserId: "board-user" },
+          { authorAgentId: "agent-cto" },
+        ],
+        "board-user",
+        null,
+        { actorIsStageGatekeeper: true },
+      ),
+    ).toBe("user:board-user");
+  });
 });

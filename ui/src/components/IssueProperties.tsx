@@ -12,7 +12,7 @@ import { queryKeys } from "../lib/queryKeys";
 import { useProjectOrder } from "../hooks/useProjectOrder";
 import { getRecentAssigneeIds, sortAgentsByRecency, trackRecentAssignee } from "../lib/recent-assignees";
 import { formatAssigneeUserLabel } from "../lib/assignees";
-import { buildExecutionPolicy, stageParticipantValues } from "../lib/issue-execution-policy";
+import { buildExecutionPolicy, isActorActiveStageParticipant, stageParticipantValues } from "../lib/issue-execution-policy";
 import { StatusIcon } from "./StatusIcon";
 import { PriorityIcon } from "./PriorityIcon";
 import { Identity } from "./Identity";
@@ -260,6 +260,11 @@ export function IssueProperties({
     [agents, recentAssigneeIds],
   );
 
+  const actorIsStageGatekeeper = useMemo(
+    () => isActorActiveStageParticipant(issue, { userId: currentUserId ?? null }),
+    [issue, currentUserId],
+  );
+
   const assignee = issue.assigneeAgentId
     ? agents?.find((a) => a.id === issue.assigneeAgentId)
     : null;
@@ -452,7 +457,20 @@ export function IssueProperties({
     </>
   );
 
-  const assigneeContent = (
+  const assigneeContent = actorIsStageGatekeeper ? (
+    <div className="px-2 py-2 text-xs text-muted-foreground space-y-1.5 max-w-[280px]">
+      <div className="font-medium text-foreground">Reassign blocked while you are the active reviewer/approver</div>
+      <p>
+        Use <span className="font-medium">Approve</span> or{" "}
+        <span className="font-medium">Request changes</span> in the comment composer to advance the
+        execution stage. Once the stage advances, the assignee follows automatically.
+      </p>
+      <p>
+        To hand the issue off without advancing the stage, first remove yourself from the stage's
+        reviewers/approvers below.
+      </p>
+    </div>
+  ) : (
     <>
       <input
         className="w-full px-2 py-1.5 text-xs bg-transparent outline-none border-b border-border mb-1 placeholder:text-muted-foreground/50"
