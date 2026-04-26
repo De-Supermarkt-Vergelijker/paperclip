@@ -2399,7 +2399,7 @@ export function issueService(db: Db) {
             .from(issues)
             .where(and(eq(issues.id, issueData.parentId), eq(issues.companyId, companyId)))
             .then((rows) => rows[0] ?? null);
-          if (parentRow?.priority) {
+          if (parentRow != null) {
             inheritedPriority = parentRow.priority;
           }
         }

@@ -1436,7 +1436,7 @@ describeEmbeddedPostgres("issueService.create priority inheritance", () => {
     return companyId;
   }
 
-  async function createParent(companyId: string, priority: string) {
+  async function createParent(companyId: string, priority: "critical" | "high" | "medium" | "low") {
     return svc.create(companyId, {
       title: `Parent ${priority}`,
       priority,
