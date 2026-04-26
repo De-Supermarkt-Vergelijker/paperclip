@@ -89,6 +89,13 @@ const PAPERCLIP_WAKE_PAYLOAD_KEY = "paperclipWake";
 const PAPERCLIP_HARNESS_CHECKOUT_KEY = "paperclipHarnessCheckedOut";
 const DETACHED_PROCESS_ERROR_CODE = "process_detached";
 const PROCESS_DETACHED_TIMEOUT_MS = 15 * 60 * 1000;
+const PROCESS_IDLE_TIMEOUT_ERROR_CODE = "process_idle_timeout";
+// Threshold for the third reaper detection path: a run that hasn't produced
+// any heartbeat events for this long is considered hung even when the
+// in-memory ChildProcess handle is still tracked.  Adresses the AIU-606
+// failure-mode where claude --print emits a result-event and then idles on
+// socket I/O without closing stdout, leaving the run "running" indefinitely.
+const PROCESS_IDLE_TIMEOUT_MS = 30 * 60 * 1000;
 const startLocksByAgent = new Map<string, Promise<void>>();
 const REPO_ONLY_CWD_SENTINEL = "/__paperclip_repo_only__";
 const MANAGED_WORKSPACE_GIT_CLONE_TIMEOUT_MS = 10 * 60 * 1000;
@@ -2972,8 +2979,9 @@ export function heartbeatService(db: Db) {
     }
   }
 
-  async function reapOrphanedRuns(opts?: { staleThresholdMs?: number }) {
+  async function reapOrphanedRuns(opts?: { staleThresholdMs?: number; idleTimeoutMs?: number }) {
     const staleThresholdMs = opts?.staleThresholdMs ?? 0;
+    const idleTimeoutMs = opts?.idleTimeoutMs ?? PROCESS_IDLE_TIMEOUT_MS;
     const now = new Date();
 
     // Find all runs stuck in "running" state (queued runs are legitimately waiting; resumeQueuedRuns handles them)
@@ -2989,6 +2997,77 @@ export function heartbeatService(db: Db) {
     const reaped: string[] = [];
 
     for (const { run, adapterType } of activeRuns) {
+      const tracksLocalChildEarly = isTrackedLocalChildProcessAdapter(adapterType);
+
+      // Idle-event detection (third path): kill runs that produced no heartbeat
+      // events for `idleTimeoutMs` even when the in-memory ChildProcess handle
+      // is still tracked.  Addresses AIU-606: a child process that emits a
+      // result event and then holds socket FDs open keeps stdout from EOFing,
+      // so the parent never marks the run completed.  The existing
+      // `runningProcesses.has` skip below cannot catch this — the handle is
+      // present and the existing detached-flow only fires after the handle is
+      // lost (server restart).
+      //
+      // Loud failure: appendRunEvent + logger.warn before kill so the reason
+      // is on the run's event stream and in server logs.  Aligns with the
+      // upstream tree-decision policy "no silent auto-recovery".
+      if (tracksLocalChildEarly && idleTimeoutMs > 0 && run.processPid) {
+        const [eventRow] = await db
+          .select({ lastCreatedAt: sql<string | null>`max(${heartbeatRunEvents.createdAt})` })
+          .from(heartbeatRunEvents)
+          .where(eq(heartbeatRunEvents.runId, run.id));
+        // Only fire when at least one heartbeat event has been written.  A
+        // run with no events is either fresh (just spawned, in startup grace)
+        // or crashed pre-event (the existing handle-lost path handles those
+        // after PROCESS_DETACHED_TIMEOUT_MS).
+        const lastEventAtMs = eventRow?.lastCreatedAt
+          ? new Date(eventRow.lastCreatedAt).getTime()
+          : 0;
+        const idleMs = lastEventAtMs > 0 ? now.getTime() - lastEventAtMs : 0;
+        if (idleMs >= idleTimeoutMs && isProcessAlive(run.processPid)) {
+          const idleMinutes = Math.round(idleMs / 1000 / 60);
+          const idleMessage =
+            `process_idle_timeout: no run events for ${idleMinutes} min; terminating child pid ${run.processPid}` +
+            (run.processGroupId ? ` (pgid ${run.processGroupId})` : "");
+          logger.warn(
+            { runId: run.id, pid: run.processPid, processGroupId: run.processGroupId, idleMinutes },
+            "process_idle_timeout reached; terminating child",
+          );
+          await terminateHeartbeatRunProcess({
+            pid: run.processPid,
+            processGroupId: run.processGroupId,
+          });
+          let finalizedRun = await setRunStatus(run.id, "failed", {
+            error: idleMessage,
+            errorCode: PROCESS_IDLE_TIMEOUT_ERROR_CODE,
+            finishedAt: now,
+          });
+          await setWakeupStatus(run.wakeupRequestId, "failed", {
+            finishedAt: now,
+            error: idleMessage,
+          });
+          if (!finalizedRun) finalizedRun = await getRun(run.id);
+          if (!finalizedRun) continue;
+          await releaseIssueExecutionAndPromote(finalizedRun);
+          await appendRunEvent(finalizedRun, await nextRunEventSeq(finalizedRun.id), {
+            eventType: "lifecycle",
+            stream: "system",
+            level: "error",
+            message: idleMessage,
+            payload: {
+              ...(run.processPid ? { processPid: run.processPid } : {}),
+              ...(run.processGroupId ? { processGroupId: run.processGroupId } : {}),
+              idleMinutes,
+            },
+          });
+          await finalizeAgentStatus(run.agentId, "failed", { runSource: run.invocationSource });
+          await startNextQueuedRunForAgent(run.agentId);
+          runningProcesses.delete(run.id);
+          reaped.push(run.id);
+          continue;
+        }
+      }
+
       if (runningProcesses.has(run.id) || activeRunExecutions.has(run.id)) continue;
 
       // Apply staleness threshold to avoid false positives

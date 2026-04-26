@@ -585,6 +585,130 @@ describeEmbeddedPostgres("heartbeat orphaned process recovery", () => {
     expect(wakeup?.status).toBe("failed");
   }, 15_000);
 
+  it("reaps a hung run with stale events even when in-memory handle is tracked (AIU-606)", async () => {
+    // AIU-606 reproduction: claude --print emitted a result-event and then
+    // idled on socket I/O without closing stdout.  The in-memory ChildProcess
+    // handle is still tracked (server didn't restart), so the existing
+    // `runningProcesses.has` skip in the reaper short-circuits the
+    // detached-flow.  The new event-staleness path catches this.
+    const child = spawnAliveProcess();
+    childProcesses.add(child);
+    expect(child.pid).toBeTypeOf("number");
+
+    const { companyId, agentId, runId, wakeupRequestId } = await seedRunFixture({
+      processPid: child.pid ?? null,
+      includeIssue: false,
+    });
+
+    // Simulate the result-event from 5 seconds ago — past the 100ms idle
+    // threshold we pass below.
+    await db.insert(heartbeatRunEvents).values({
+      companyId,
+      runId,
+      agentId,
+      seq: 1,
+      eventType: "result",
+      stream: "stdout",
+      level: "info",
+      message: "subtype=success duration_ms=2394330",
+      createdAt: new Date(Date.now() - 5_000),
+    });
+
+    // Simulate handle-still-tracked (the AIU-606 condition that bypasses the
+    // existing detached-flow).
+    runningProcesses.set(runId, {
+      child,
+      graceSec: 5,
+      processGroupId: null,
+    });
+
+    const heartbeat = heartbeatService(db);
+
+    const result = await heartbeat.reapOrphanedRuns({ idleTimeoutMs: 100 });
+    expect(result.reaped).toBe(1);
+    expect(result.runIds).toEqual([runId]);
+
+    const run = await heartbeat.getRun(runId);
+    expect(run?.status).toBe("failed");
+    expect(run?.errorCode).toBe("process_idle_timeout");
+    expect(run?.error).toContain("no run events");
+    expect(run?.error).toContain(String(child.pid));
+    expect(run?.finishedAt).toBeTruthy();
+
+    expect(await waitForPidExit(child.pid!, 2_000)).toBe(true);
+
+    const wakeup = await db
+      .select()
+      .from(agentWakeupRequests)
+      .where(eq(agentWakeupRequests.id, wakeupRequestId))
+      .then((rows) => rows[0] ?? null);
+    expect(wakeup?.status).toBe("failed");
+
+    // Loud failure: the reaper must record a lifecycle event so the kill
+    // reason is on the run's event stream (upstream tree-decision policy
+    // "no silent auto-recovery").
+    const events = await db
+      .select()
+      .from(heartbeatRunEvents)
+      .where(eq(heartbeatRunEvents.runId, runId));
+    const lifecycleEvent = events.find(
+      (event) => event.eventType === "lifecycle" && event.message?.includes("process_idle_timeout"),
+    );
+    expect(lifecycleEvent?.level).toBe("error");
+    expect(lifecycleEvent?.payload).toMatchObject({ processPid: child.pid });
+
+    // Reaper releases the in-memory handle so the next run can spawn cleanly.
+    expect(runningProcesses.has(runId)).toBe(false);
+  });
+
+  it("does not reap a run that recently produced events even when the pid is alive", async () => {
+    const child = spawnAliveProcess();
+    childProcesses.add(child);
+    expect(child.pid).toBeTypeOf("number");
+
+    const { companyId, agentId, runId, wakeupRequestId } = await seedRunFixture({
+      processPid: child.pid ?? null,
+      includeIssue: false,
+    });
+
+    // Fresh event (well within the 5-second idle window we pass below).
+    await db.insert(heartbeatRunEvents).values({
+      companyId,
+      runId,
+      agentId,
+      seq: 1,
+      eventType: "result",
+      stream: "stdout",
+      level: "info",
+      message: "still streaming",
+      createdAt: new Date(),
+    });
+
+    runningProcesses.set(runId, {
+      child,
+      graceSec: 5,
+      processGroupId: null,
+    });
+
+    const heartbeat = heartbeatService(db);
+
+    const result = await heartbeat.reapOrphanedRuns({ idleTimeoutMs: 5_000 });
+    expect(result.reaped).toBe(0);
+
+    const run = await heartbeat.getRun(runId);
+    expect(run?.status).toBe("running");
+    expect(run?.errorCode).toBeNull();
+
+    const wakeup = await db
+      .select()
+      .from(agentWakeupRequests)
+      .where(eq(agentWakeupRequests.id, wakeupRequestId))
+      .then((rows) => rows[0] ?? null);
+    expect(wakeup?.status).toBe("claimed");
+
+    expect(child.killed).toBe(false);
+  });
+
   it("clears the detached warning when the run reports activity again", async () => {
     const { runId } = await seedRunFixture({
       includeIssue: false,
