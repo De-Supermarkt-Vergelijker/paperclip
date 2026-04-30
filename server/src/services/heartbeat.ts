@@ -931,6 +931,33 @@ function readNonEmptyString(value: unknown): string | null {
   return typeof value === "string" && value.trim().length > 0 ? value : null;
 }
 
+export type DequeueSilentCancelCause =
+  | "session-rotation"
+  | "mention-on-closed"
+  | "blocker-resolved-on-closed"
+  | "unknown";
+
+// AIU-594 fase 1: best-effort cause-derivation voor de silent-cancel telemetrie.
+// - mention-on-closed: wake fired by an @-mention comment on an issue that is
+//   already done/cancelled (wakeReason=issue_comment_mentioned).
+// - blocker-resolved-on-closed: dependency wake fired after the dependent issue
+//   was already closed (wakeReason=issue_blockers_resolved).
+// - session-rotation: not derivable from dequeue context today (the
+//   sessionRotated/sessionRotationReason flags live on the *previous* run's
+//   usageJson and are not propagated to follow-up wake context). Reserved for a
+//   future refinement once that signal is available at dequeue time.
+// - unknown: any other wakeReason firing on a closed issue (issue_commented,
+//   issue_assigned, issue_children_completed, retries, etc.). The week-1
+//   aggregate splits unknown by wakeReason to surface refinement candidates.
+export function deriveDequeueSilentCancelCause(
+  context: Record<string, unknown>,
+): DequeueSilentCancelCause {
+  const wakeReason = readNonEmptyString(context.wakeReason);
+  if (wakeReason === "issue_comment_mentioned") return "mention-on-closed";
+  if (wakeReason === "issue_blockers_resolved") return "blocker-resolved-on-closed";
+  return "unknown";
+}
+
 export function summarizeHeartbeatRunContextSnapshot(
   contextSnapshot: Record<string, unknown> | null | undefined,
 ): Record<string, unknown> | null {
@@ -4028,6 +4055,23 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
 
       const staleness = await evaluateQueuedRunStaleness(run, issueId, context);
       if (staleness.stale) {
+        if (staleness.errorCode === "issue_terminal_status") {
+          // AIU-594 fase 1: structured logging vóór de cancel-actie zodat élke
+          // silent-cancel-on-done fire aggregeerbaar is, ook al volgt geen run/cost.
+          // Cause-derivation uit wakeReason; refinement na week-1 meting.
+          logger.info(
+            {
+              agentId: run.agentId,
+              issueId,
+              issueIdentifier: readNonEmptyString(staleness.details.issueIdentifier),
+              issueStatus: readNonEmptyString(staleness.details.currentStatus),
+              cause: deriveDequeueSilentCancelCause(context),
+              wakeReason: readNonEmptyString(context.wakeReason),
+              runId: run.id,
+            },
+            "heartbeat.silent_cancel",
+          );
+        }
         await cancelQueuedRunForStaleIssue(run, issueId, staleness);
         logger.info(
           { runId: run.id, issueId, errorCode: staleness.errorCode },
@@ -4176,6 +4220,7 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
     const issue = await db
       .select({
         id: issues.id,
+        identifier: issues.identifier,
         status: issues.status,
         assigneeAgentId: issues.assigneeAgentId,
         executionState: issues.executionState,
@@ -4217,7 +4262,7 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
           stale: true,
           errorCode: "issue_terminal_status",
           reason: `Cancelled because issue reached terminal status (${issue.status}) before the queued run could start`,
-          details: { issueId, currentStatus: issue.status },
+          details: { issueId, issueIdentifier: issue.identifier, currentStatus: issue.status },
         };
       }
     }
