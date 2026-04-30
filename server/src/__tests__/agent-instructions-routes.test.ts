@@ -10,6 +10,7 @@ const mockAgentService = vi.hoisted(() => ({
 
 const mockAgentInstructionsService = vi.hoisted(() => ({
   getBundle: vi.fn(),
+  getBundleWithSync: vi.fn(),
   readFile: vi.fn(),
   updateBundle: vi.fn(),
   writeFile: vi.fn(),
@@ -164,7 +165,7 @@ describe("agent instructions bundle routes", () => {
       ...makeAgent(),
       adapterConfig: patch.adapterConfig ?? {},
     }));
-    mockAgentInstructionsService.getBundle.mockResolvedValue({
+    const bundle = {
       agentId: "11111111-1111-4111-8111-111111111111",
       companyId: "company-1",
       mode: "managed",
@@ -186,7 +187,9 @@ describe("agent instructions bundle routes", () => {
         deprecated: false,
         virtual: false,
       }],
-    });
+    };
+    mockAgentInstructionsService.getBundle.mockResolvedValue(bundle);
+    mockAgentInstructionsService.getBundleWithSync.mockResolvedValue({ bundle, adapterConfig: null });
     mockAgentInstructionsService.readFile.mockResolvedValue({
       path: "AGENTS.md",
       size: 12,
@@ -234,7 +237,7 @@ describe("agent instructions bundle routes", () => {
       managedRootPath: "/tmp/agent-1",
       entryFile: "AGENTS.md",
     });
-    expect(mockAgentInstructionsService.getBundle).toHaveBeenCalled();
+    expect(mockAgentInstructionsService.getBundleWithSync).toHaveBeenCalled();
   });
 
   it("writes a bundle file and persists compatibility config", async () => {
