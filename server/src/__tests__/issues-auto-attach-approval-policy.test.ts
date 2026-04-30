@@ -118,6 +118,14 @@ vi.mock("../services/index.js", () => ({
   }),
   agentService: () => ({
     getById: vi.fn(async () => null),
+    list: vi.fn(async () => []),
+    resolveByReference: vi.fn(async (_companyId: string, reference: string) => ({
+      agent: { id: reference },
+      ambiguous: false,
+    })),
+  }),
+  companyService: () => ({
+    getById: vi.fn(async () => null),
   }),
   documentService: () => ({}),
   executionWorkspaceService: () => ({
@@ -146,6 +154,28 @@ vi.mock("../services/index.js", () => ({
     listCompanyIds: vi.fn(async () => ["company-1"]),
   }),
   issueApprovalService: () => ({}),
+  issueThreadInteractionService: () => ({
+    listForIssue: vi.fn(async () => []),
+    create: vi.fn(),
+    acceptInteraction: vi.fn(),
+    rejectInteraction: vi.fn(),
+    answerQuestions: vi.fn(),
+    expireStaleRequestConfirmationsForIssueDocument: vi.fn(async () => []),
+    expireRequestConfirmationsSupersededByComment: vi.fn(async () => []),
+  }),
+  issueReferenceService: () => ({
+    listIssueReferenceSummary: vi.fn(async () => ({ outbound: [], inbound: [] })),
+    diffIssueReferenceSummary: vi.fn(() => ({
+      addedReferencedIssues: [],
+      removedReferencedIssues: [],
+      currentReferencedIssues: [],
+    })),
+    emptySummary: vi.fn(() => ({ outbound: [], inbound: [] })),
+    syncComment: vi.fn(async () => undefined),
+    syncIssue: vi.fn(async () => undefined),
+    syncDocument: vi.fn(async () => undefined),
+    deleteDocumentSource: vi.fn(async () => undefined),
+  }),
   issueService: () => mockIssueService,
   logActivity: vi.fn(async () => undefined),
   projectService: () => ({}),
