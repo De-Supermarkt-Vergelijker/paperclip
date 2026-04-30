@@ -1,4 +1,7 @@
+import fs from "node:fs";
+import path from "node:path";
 import { test, expect, request as pwRequest, type APIRequestContext } from "@playwright/test";
+import { acquireBoardToken } from "../../cli/src/__tests__/helpers/board-token.js";
 
 /**
  * E2E: Signoff execution policy flow.
@@ -235,11 +238,40 @@ async function createIssueWithPolicy(ctx: TestContext, title: string, stages?: u
   return issue;
 }
 
+function resolveEmbeddedPostgresDatabaseUrl(): string {
+  const home = process.env.PAPERCLIP_E2E_HOME;
+  const instanceId = process.env.PAPERCLIP_E2E_INSTANCE_ID;
+  if (!home || !instanceId) {
+    throw new Error(
+      "PAPERCLIP_E2E_HOME / PAPERCLIP_E2E_INSTANCE_ID not set — playwright.config.ts must export them before spec workers boot.",
+    );
+  }
+  const configPath = path.join(home, "instances", instanceId, "config.json");
+  const raw = JSON.parse(fs.readFileSync(configPath, "utf8")) as {
+    database?: { mode?: string; embeddedPostgresPort?: number; connectionString?: string };
+  };
+  if (raw.database?.mode === "postgres" && raw.database.connectionString) {
+    return raw.database.connectionString;
+  }
+  const port = raw.database?.embeddedPostgresPort ?? 54329;
+  return `postgres://paperclip:paperclip@127.0.0.1:${port}/paperclip`;
+}
+
 test.describe("Signoff execution policy", () => {
   let ctx: TestContext;
 
   test.beforeAll(async () => {
-    const boardRequest = await pwRequest.newContext({ baseURL: BASE_URL });
+    // local_trusted mode rejects mutating requests without a Bearer token or
+    // a browser Origin/Referer header (server/src/middleware/auth.ts since
+    // f71a1bc / 9c44788 — see AIU-307 + AIU-662). Mint a board API key for
+    // the implicit local-board principal so this spec acts as an
+    // authenticated board user instead of pretending to be browser UI.
+    const databaseUrl = resolveEmbeddedPostgresDatabaseUrl();
+    const { token: boardToken } = await acquireBoardToken({ databaseUrl });
+    const boardRequest = await pwRequest.newContext({
+      baseURL: BASE_URL,
+      extraHTTPHeaders: { Authorization: `Bearer ${boardToken}` },
+    });
     ctx = await setupCompany(boardRequest);
   });
 

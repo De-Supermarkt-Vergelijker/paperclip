@@ -11,6 +11,7 @@ import {
   startEmbeddedPostgresTestDatabase,
 } from "./helpers/embedded-postgres.js";
 import { createStoredZipArchive } from "./helpers/zip.js";
+import { acquireBoardToken } from "./helpers/board-token.js";
 
 const execFileAsync = promisify(execFile);
 type ServerProcess = ReturnType<typeof spawn>;
@@ -199,8 +200,22 @@ async function stopServerProcess(child: ServerProcess | null) {
   });
 }
 
-async function api<T>(baseUrl: string, pathname: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(`${baseUrl}${pathname}`, init);
+function withBoardAuth(token: string | null, init?: RequestInit): RequestInit | undefined {
+  if (!token) return init;
+  const headers = new Headers(init?.headers);
+  if (!headers.has("authorization")) {
+    headers.set("authorization", `Bearer ${token}`);
+  }
+  return { ...init, headers };
+}
+
+async function api<T>(
+  baseUrl: string,
+  pathname: string,
+  init?: RequestInit,
+  boardToken: string | null = null,
+): Promise<T> {
+  const res = await fetch(`${baseUrl}${pathname}`, withBoardAuth(boardToken, init));
   const text = await res.text();
   if (!res.ok) {
     throw new Error(`Request failed ${res.status} ${pathname}: ${text}`);
@@ -210,7 +225,11 @@ async function api<T>(baseUrl: string, pathname: string, init?: RequestInit): Pr
 
 async function runCliJson<T>(
   args: string[],
-  opts: TestPaperclipEnv & { apiBase?: string; includeConfigArg?: boolean },
+  opts: TestPaperclipEnv & {
+    apiBase?: string;
+    includeConfigArg?: boolean;
+    boardToken?: string | null;
+  },
 ) {
   const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../..");
   const cliArgs = ["--silent", "paperclipai", ...args];
@@ -221,12 +240,16 @@ async function runCliJson<T>(
     cliArgs.push("--config", opts.configPath);
   }
   cliArgs.push("--json");
+  const env = createCliEnv(opts);
+  if (opts.boardToken) {
+    env.PAPERCLIP_API_KEY = opts.boardToken;
+  }
   const result = await execFileAsync(
     "pnpm",
     cliArgs,
     {
       cwd: repoRoot,
-      env: createCliEnv(opts),
+      env,
       maxBuffer: 10 * 1024 * 1024,
     },
   );
@@ -276,6 +299,7 @@ describeEmbeddedPostgres("paperclipai company import/export e2e", () => {
   let paperclipInstanceId = "";
   let serverProcess: ServerProcess | null = null;
   let tempDb: Awaited<ReturnType<typeof startEmbeddedPostgresTestDatabase>> | null = null;
+  let boardToken: string | null = null;
 
   beforeAll(async () => {
     tempRoot = mkdtempSync(path.join(os.tmpdir(), "paperclip-company-cli-e2e-"));
@@ -317,6 +341,14 @@ describeEmbeddedPostgres("paperclipai company import/export e2e", () => {
     });
 
     await waitForServer(apiBase, child, output);
+
+    // local_trusted mode rejects mutating requests without a Bearer token or
+    // a browser Origin/Referer header (server/src/middleware/auth.ts since
+    // f71a1bc / 9c44788 — see AIU-307 + AIU-662). Mint a board API key for
+    // the implicit local-board principal so test setup acts as an
+    // authenticated board user instead of pretending to be browser UI.
+    const acquired = await acquireBoardToken({ databaseUrl: tempDb.connectionString });
+    boardToken = acquired.token;
   }, 60_000);
 
   afterAll(async () => {
@@ -329,6 +361,9 @@ describeEmbeddedPostgres("paperclipai company import/export e2e", () => {
 
   it("exports a company package and imports it into new and existing companies", async () => {
     expect(serverProcess).not.toBeNull();
+    expect(boardToken).not.toBeNull();
+    const apiAuth = <T,>(pathname: string, init?: RequestInit) =>
+      api<T>(apiBase, pathname, init, boardToken);
 
     const cliContext = await runCliJson<{
       contextPath: string;
@@ -341,6 +376,7 @@ describeEmbeddedPostgres("paperclipai company import/export e2e", () => {
         paperclipHome,
         instanceId: paperclipInstanceId,
         shellHome: cliShellHome,
+        boardToken,
         includeConfigArg: false,
       },
     );
@@ -355,19 +391,18 @@ describeEmbeddedPostgres("paperclipai company import/export e2e", () => {
     rmSync(expectedContextPath, { force: true });
     expect(existsSync(expectedContextPath)).toBe(false);
 
-    const sourceCompany = await api<{ id: string; name: string; issuePrefix: string }>(apiBase, "/api/companies", {
+    const sourceCompany = await apiAuth<{ id: string; name: string; issuePrefix: string }>("/api/companies", {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ name: `CLI Export Source ${Date.now()}` }),
     });
-    await api(apiBase, `/api/companies/${sourceCompany.id}`, {
+    await apiAuth(`/api/companies/${sourceCompany.id}`, {
       method: "PATCH",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ requireBoardApprovalForNewAgents: false }),
     });
 
-    const sourceAgent = await api<{ id: string; name: string }>(
-      apiBase,
+    const sourceAgent = await apiAuth<{ id: string; name: string }>(
       `/api/companies/${sourceCompany.id}/agents`,
       {
         method: "POST",
@@ -386,8 +421,7 @@ describeEmbeddedPostgres("paperclipai company import/export e2e", () => {
       },
     );
 
-    const sourceProject = await api<{ id: string; name: string }>(
-      apiBase,
+    const sourceProject = await apiAuth<{ id: string; name: string }>(
       `/api/companies/${sourceCompany.id}/projects`,
       {
         method: "POST",
@@ -401,8 +435,7 @@ describeEmbeddedPostgres("paperclipai company import/export e2e", () => {
 
     const largeIssueDescription = `Round-trip the company package through the CLI.\n\n${"portable-data ".repeat(12_000)}`;
 
-    const sourceIssue = await api<{ id: string; title: string; identifier: string }>(
-      apiBase,
+    const sourceIssue = await apiAuth<{ id: string; title: string; identifier: string }>(
       `/api/companies/${sourceCompany.id}/issues`,
       {
         method: "POST",
@@ -437,6 +470,7 @@ describeEmbeddedPostgres("paperclipai company import/export e2e", () => {
         paperclipHome,
         instanceId: paperclipInstanceId,
         shellHome: cliShellHome,
+        boardToken,
       },
     );
 
@@ -467,6 +501,7 @@ describeEmbeddedPostgres("paperclipai company import/export e2e", () => {
         paperclipHome,
         instanceId: paperclipInstanceId,
         shellHome: cliShellHome,
+        boardToken,
       },
     );
 
@@ -474,18 +509,9 @@ describeEmbeddedPostgres("paperclipai company import/export e2e", () => {
     expect(importedNew.agents).toHaveLength(1);
     expect(importedNew.agents[0]?.action).toBe("created");
 
-    const importedAgents = await api<Array<{ id: string; name: string }>>(
-      apiBase,
-      `/api/companies/${importedNew.company.id}/agents`,
-    );
-    const importedProjects = await api<Array<{ id: string; name: string }>>(
-      apiBase,
-      `/api/companies/${importedNew.company.id}/projects`,
-    );
-    const importedIssues = await api<Array<{ id: string; title: string; identifier: string }>>(
-      apiBase,
-      `/api/companies/${importedNew.company.id}/issues`,
-    );
+    const importedAgents = await apiAuth<Array<{ id: string; name: string }>>(`/api/companies/${importedNew.company.id}/agents`);
+    const importedProjects = await apiAuth<Array<{ id: string; name: string }>>(`/api/companies/${importedNew.company.id}/projects`);
+    const importedIssues = await apiAuth<Array<{ id: string; title: string; identifier: string }>>(`/api/companies/${importedNew.company.id}/issues`);
     const importedMatchingIssues = importedIssues.filter((issue) => issue.title === sourceIssue.title);
 
     expect(importedAgents.map((agent) => agent.name)).toContain(sourceAgent.name);
@@ -521,6 +547,7 @@ describeEmbeddedPostgres("paperclipai company import/export e2e", () => {
         paperclipHome,
         instanceId: paperclipInstanceId,
         shellHome: cliShellHome,
+        boardToken,
       },
     );
 
@@ -554,24 +581,16 @@ describeEmbeddedPostgres("paperclipai company import/export e2e", () => {
         paperclipHome,
         instanceId: paperclipInstanceId,
         shellHome: cliShellHome,
+        boardToken,
       },
     );
 
     expect(importedExisting.company.action).toBe("unchanged");
     expect(importedExisting.agents.some((agent) => agent.action === "created")).toBe(true);
 
-    const twiceImportedAgents = await api<Array<{ id: string; name: string }>>(
-      apiBase,
-      `/api/companies/${importedNew.company.id}/agents`,
-    );
-    const twiceImportedProjects = await api<Array<{ id: string; name: string }>>(
-      apiBase,
-      `/api/companies/${importedNew.company.id}/projects`,
-    );
-    const twiceImportedIssues = await api<Array<{ id: string; title: string; identifier: string }>>(
-      apiBase,
-      `/api/companies/${importedNew.company.id}/issues`,
-    );
+    const twiceImportedAgents = await apiAuth<Array<{ id: string; name: string }>>(`/api/companies/${importedNew.company.id}/agents`);
+    const twiceImportedProjects = await apiAuth<Array<{ id: string; name: string }>>(`/api/companies/${importedNew.company.id}/projects`);
+    const twiceImportedIssues = await apiAuth<Array<{ id: string; title: string; identifier: string }>>(`/api/companies/${importedNew.company.id}/issues`);
     const twiceImportedMatchingIssues = twiceImportedIssues.filter((issue) => issue.title === sourceIssue.title);
 
     expect(twiceImportedAgents).toHaveLength(2);
@@ -607,6 +626,7 @@ describeEmbeddedPostgres("paperclipai company import/export e2e", () => {
         paperclipHome,
         instanceId: paperclipInstanceId,
         shellHome: cliShellHome,
+        boardToken,
       },
     );
 

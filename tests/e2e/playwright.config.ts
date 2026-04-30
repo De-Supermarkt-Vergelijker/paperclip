@@ -7,7 +7,17 @@ import { defineConfig } from "@playwright/test";
 // even when the dev server is running on :3100 in authenticated mode.
 const PORT = Number(process.env.PAPERCLIP_E2E_PORT ?? 3199);
 const BASE_URL = `http://127.0.0.1:${PORT}`;
-const PAPERCLIP_HOME = fs.mkdtempSync(path.join(os.tmpdir(), "paperclip-e2e-home-"));
+const PAPERCLIP_INSTANCE_ID = "playwright-e2e";
+
+// Allocate a single throwaway PAPERCLIP_HOME for the whole test session.
+// Playwright workers re-import this config in their own processes, so a bare
+// `mkdtempSync` would return a different path per worker. Resolving via env
+// (PAPERCLIP_E2E_HOME) keeps the runner and all workers pointing at the
+// same dir — required by tests that read the server's config (AIU-662).
+const PAPERCLIP_HOME =
+  process.env.PAPERCLIP_E2E_HOME ?? fs.mkdtempSync(path.join(os.tmpdir(), "paperclip-e2e-home-"));
+process.env.PAPERCLIP_E2E_HOME = PAPERCLIP_HOME;
+process.env.PAPERCLIP_E2E_INSTANCE_ID = PAPERCLIP_INSTANCE_ID;
 
 export default defineConfig({
   testDir: ".",
@@ -44,7 +54,7 @@ export default defineConfig({
       ...process.env,
       PORT: String(PORT),
       PAPERCLIP_HOME,
-      PAPERCLIP_INSTANCE_ID: "playwright-e2e",
+      PAPERCLIP_INSTANCE_ID,
       PAPERCLIP_BIND: "loopback",
       PAPERCLIP_DEPLOYMENT_MODE: "local_trusted",
       PAPERCLIP_DEPLOYMENT_EXPOSURE: "private",
