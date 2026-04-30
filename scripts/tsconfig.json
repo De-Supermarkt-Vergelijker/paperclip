@@ -1,0 +1,10 @@
+{
+  "extends": "../tsconfig.base.json",
+  "compilerOptions": {
+    "rootDir": ".",
+    "outDir": "../.tsbuild/scripts",
+    "noEmit": true
+  },
+  "include": ["**/*.ts", "**/*.mts", "**/*.mjs"],
+  "exclude": ["node_modules", "dist"]
+}
