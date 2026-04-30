@@ -93,7 +93,7 @@ function applyStatusSideEffects(
   status: string | undefined,
   patch: Partial<typeof issues.$inferInsert>,
 ): Partial<typeof issues.$inferInsert> {
-  applyScheduledForAutoBacklog(patch, existing?.status);
+  applyScheduledForAutoBacklog(patch, status);
   if (!patch.status && !status) return patch;
   const effectiveStatus = patch.status ?? status;
 
@@ -1430,6 +1430,7 @@ const issueListSelect = {
   completedAt: issues.completedAt,
   cancelledAt: issues.cancelledAt,
   hiddenAt: issues.hiddenAt,
+  scheduledFor: issues.scheduledFor,
   createdAt: issues.createdAt,
   updatedAt: issues.updatedAt,
 };

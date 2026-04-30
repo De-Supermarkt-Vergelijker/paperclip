@@ -2367,7 +2367,15 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
       currentInstructionsHash !== latestRun.instructionsHashBefore
     ) {
       const reason = "agent instructions changed since last session run";
-      const latestSummary = summarizeHeartbeatRunResultJson(latestRun.resultJson);
+      const latestSummary = summarizeHeartbeatRunListResultJson({
+        summary: latestRun?.resultSummary,
+        result: latestRun?.resultResult,
+        message: latestRun?.resultMessage,
+        error: latestRun?.resultError,
+        totalCostUsd: latestRun?.resultTotalCostUsd,
+        costUsd: latestRun?.resultCostUsd,
+        costUsdCamel: latestRun?.resultCostUsdCamel,
+      });
       const latestTextSummary =
         readNonEmptyString(latestSummary?.summary) ??
         readNonEmptyString(latestSummary?.result) ??

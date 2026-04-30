@@ -90,6 +90,7 @@ function createIssue(overrides: Partial<Issue> = {}): Issue {
     executionWorkspaceId: null,
     executionWorkspacePreference: null,
     executionWorkspaceSettings: null,
+    scheduledFor: null,
     startedAt: null,
     completedAt: null,
     cancelledAt: null,

@@ -62,6 +62,7 @@ function makeIssue(overrides: Partial<Issue> = {}): Issue {
     executionWorkspacePreference: "shared_workspace",
     executionWorkspaceSettings: null,
     currentExecutionWorkspace: null,
+    scheduledFor: null,
     startedAt: null,
     completedAt: null,
     cancelledAt: null,

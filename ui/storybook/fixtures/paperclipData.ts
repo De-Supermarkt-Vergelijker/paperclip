@@ -719,6 +719,7 @@ export function createIssue(overrides: Partial<Issue> = {}): Issue {
     executionWorkspaceId: "execution-workspace-storybook",
     executionWorkspacePreference: "project",
     executionWorkspaceSettings: null,
+    scheduledFor: null,
     startedAt: recent(28),
     completedAt: null,
     cancelledAt: null,
