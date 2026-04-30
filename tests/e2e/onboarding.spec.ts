@@ -1,4 +1,5 @@
 import { test, expect } from "@playwright/test";
+import { acquireE2eBoardToken } from "./helpers/board-bootstrap.js";
 
 /**
  * E2E: Onboarding wizard flow (skip_llm mode).
@@ -74,9 +75,16 @@ test.describe("Onboarding wizard", () => {
       );
       expect(ceoAgentAfterCreate).toBeTruthy();
 
+      // local_trusted's mutating-auth guard rejects PATCH/POST without a
+      // Bearer token or a browser Origin header. `page.request` is an
+      // APIRequestContext that doesn't auto-attach Origin even when the page
+      // navigated same-origin, so we mint a board API key and bear it
+      // explicitly on the mutation. See AIU-307 + AIU-662.
+      const boardToken = await acquireE2eBoardToken();
       const disableWakeRes = await page.request.patch(
         `${baseUrl}/api/agents/${ceoAgentAfterCreate.id}?companyId=${encodeURIComponent(companyAfterAgent.id)}`,
         {
+          headers: { Authorization: `Bearer ${boardToken}` },
           data: {
             runtimeConfig: {
               heartbeat: {
