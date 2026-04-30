@@ -40,15 +40,22 @@ if (!embeddedPostgresSupport.supported) {
 
 describeEmbeddedPostgres("lastTimerHeartbeatAt timer-suppression fix", () => {
   let db!: ReturnType<typeof createDb>;
+  let svc!: ReturnType<typeof heartbeatService>;
   let tempDb: Awaited<ReturnType<typeof startEmbeddedPostgresTestDatabase>> | null = null;
 
   beforeAll(async () => {
     tempDb = await startEmbeddedPostgresTestDatabase("paperclip-timer-suppression-");
     db = createDb(tempDb.connectionString);
+    svc = heartbeatService(db);
   }, 20_000);
 
   afterEach(async () => {
     vi.clearAllMocks();
+    // svc.wakeup() / svc.tickTimers() fire executeRun() as fire-and-forget;
+    // wait for those background DB queries to settle before TRUNCATE so
+    // CASCADE's AccessExclusiveLock does not deadlock against the run's
+    // RowShareLocks. Without this, the verify CI deadlocks reproducibly.
+    await svc.drainActiveRunExecutions();
     await db.execute(sql`TRUNCATE companies CASCADE`);
   });
 
@@ -145,8 +152,6 @@ describeEmbeddedPostgres("lastTimerHeartbeatAt timer-suppression fix", () => {
         lastTimerHeartbeatAt: oldTimerHeartbeat,
         intervalSec: 3600,
       });
-
-      const svc = heartbeatService(db);
       const result = await svc.tickTimers(now);
 
       expect(result.enqueued).toBe(1);
@@ -161,8 +166,6 @@ describeEmbeddedPostgres("lastTimerHeartbeatAt timer-suppression fix", () => {
         lastTimerHeartbeatAt: recentTimerHeartbeat,
         intervalSec: 3600,
       });
-
-      const svc = heartbeatService(db);
       const result = await svc.tickTimers(now);
 
       expect(result.enqueued).toBe(0);
@@ -176,8 +179,6 @@ describeEmbeddedPostgres("lastTimerHeartbeatAt timer-suppression fix", () => {
         lastTimerHeartbeatAt: null,
         intervalSec: 3600,
       });
-
-      const svc = heartbeatService(db);
       const result = await svc.tickTimers(now);
 
       expect(result.enqueued).toBe(0);
@@ -188,8 +189,6 @@ describeEmbeddedPostgres("lastTimerHeartbeatAt timer-suppression fix", () => {
     it("event-driven orphan reap does NOT set lastTimerHeartbeatAt", async () => {
       const { companyId, agentId } = await seedAgent({ status: "running" });
       await seedOrphanedRun({ companyId, agentId, invocationSource: "assignment" });
-
-      const svc = heartbeatService(db);
       await svc.reapOrphanedRuns();
 
       const [agent] = await db.select().from(agents).where(eq(agents.id, agentId));
@@ -200,8 +199,6 @@ describeEmbeddedPostgres("lastTimerHeartbeatAt timer-suppression fix", () => {
     it("timer orphan reap sets lastTimerHeartbeatAt", async () => {
       const { companyId, agentId } = await seedAgent({ status: "running" });
       await seedOrphanedRun({ companyId, agentId, invocationSource: "timer" });
-
-      const svc = heartbeatService(db);
       await svc.reapOrphanedRuns();
 
       const [agent] = await db.select().from(agents).where(eq(agents.id, agentId));
@@ -317,8 +314,6 @@ describeEmbeddedPostgres("lastTimerHeartbeatAt timer-suppression fix", () => {
         updatedAt: issueOlderThanTimer,
         issueNumber: 1,
       });
-
-      const svc = heartbeatService(db);
       const result = await svc.wakeup(agentId, {
         source: "timer",
         triggerDetail: "system",
@@ -343,8 +338,6 @@ describeEmbeddedPostgres("lastTimerHeartbeatAt timer-suppression fix", () => {
         updatedAt: issueNewerThanTimer,
         issueNumber: 1,
       });
-
-      const svc = heartbeatService(db);
       // wakeup will proceed past our check (hasChanges = true) and then
       // fail downstream (no adapter configured etc.) — that's expected.
       // We verify it does NOT return null with a "timer.no_changes" skip.
@@ -364,8 +357,6 @@ describeEmbeddedPostgres("lastTimerHeartbeatAt timer-suppression fix", () => {
     it("always runs first timer heartbeat when no previous timer run exists", async () => {
       const { companyId, agentId } = await seedAgent();
       // No completed timer run seeded — first time ever
-
-      const svc = heartbeatService(db);
       try {
         await svc.wakeup(agentId, {
           source: "timer",
@@ -400,8 +391,6 @@ describeEmbeddedPostgres("lastTimerHeartbeatAt timer-suppression fix", () => {
           createdAt: new Date(lastTimerAt.getTime() + (i + 1) * 60_000),
         });
       }
-
-      const svc = heartbeatService(db);
       // With 3 consecutive skips and no changes, the safety valve should force a run
       try {
         await svc.wakeup(agentId, {
@@ -438,8 +427,6 @@ describeEmbeddedPostgres("lastTimerHeartbeatAt timer-suppression fix", () => {
           createdAt: new Date(lastTimerAt.getTime() + (i + 1) * 60_000),
         });
       }
-
-      const svc = heartbeatService(db);
       const result = await svc.wakeup(agentId, {
         source: "timer",
         triggerDetail: "system",

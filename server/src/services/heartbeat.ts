@@ -2125,6 +2125,11 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
   });
   const workspaceOperationsSvc = workspaceOperationService(db);
   const activeRunExecutions = new Set<string>();
+  // Promises for in-flight executeRun() calls fired by startNextQueuedRunForAgent.
+  // Production never awaits these (fire-and-forget by design); tests use
+  // drainActiveRunExecutions() to wait for dispatch work before TRUNCATE so
+  // afterEach cleanup does not deadlock against the run's open SELECTs.
+  const activeRunPromises = new Map<string, Promise<unknown>>();
   const budgetHooks = {
     cancelWorkForScope: cancelBudgetScopeWork,
   };
@@ -4931,9 +4936,15 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
       if (claimedRuns.length === 0) return [];
 
       for (const claimedRun of claimedRuns) {
-        void executeRun(claimedRun.id).catch((err) => {
-          logger.error({ err, runId: claimedRun.id }, "queued heartbeat execution failed");
-        });
+        const runId = claimedRun.id;
+        const promise = executeRun(runId)
+          .catch((err) => {
+            logger.error({ err, runId }, "queued heartbeat execution failed");
+          })
+          .finally(() => {
+            activeRunPromises.delete(runId);
+          });
+        activeRunPromises.set(runId, promise);
       }
       return claimedRuns;
     });
@@ -7994,6 +8005,16 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
       }),
 
     wakeup: enqueueWakeup,
+
+    // Test-only: wait for fire-and-forget executeRun() promises spawned by
+    // startNextQueuedRunForAgent. Loops because executeRun's own finally
+    // can call startNextQueuedRunForAgent which queues more runs.
+    drainActiveRunExecutions: async () => {
+      while (activeRunPromises.size > 0) {
+        const pending = Array.from(activeRunPromises.values());
+        await Promise.allSettled(pending);
+      }
+    },
 
     reportRunActivity: clearDetachedRunWarning,
 
