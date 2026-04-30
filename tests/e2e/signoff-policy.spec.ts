@@ -1,4 +1,5 @@
 import { test, expect, request as pwRequest, type APIRequestContext } from "@playwright/test";
+import { acquireE2eBoardToken } from "./helpers/board-bootstrap.js";
 
 /**
  * E2E: Signoff execution policy flow.
@@ -239,7 +240,16 @@ test.describe("Signoff execution policy", () => {
   let ctx: TestContext;
 
   test.beforeAll(async () => {
-    const boardRequest = await pwRequest.newContext({ baseURL: BASE_URL });
+    // local_trusted mode rejects mutating requests without a Bearer token or
+    // a browser Origin/Referer header (server/src/middleware/auth.ts since
+    // f71a1bc / 9c44788 — see AIU-307 + AIU-662). Mint a board API key for
+    // the implicit local-board principal so this spec acts as an
+    // authenticated board user instead of pretending to be browser UI.
+    const boardToken = await acquireE2eBoardToken();
+    const boardRequest = await pwRequest.newContext({
+      baseURL: BASE_URL,
+      extraHTTPHeaders: { Authorization: `Bearer ${boardToken}` },
+    });
     ctx = await setupCompany(boardRequest);
   });
 

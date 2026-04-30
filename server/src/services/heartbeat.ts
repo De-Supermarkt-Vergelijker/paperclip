@@ -1337,6 +1337,15 @@ export function shouldResetTaskSessionForWake(
 ) {
   if (contextSnapshot?.forceFreshSession === true) return true;
 
+  const wakeReason = readNonEmptyString(contextSnapshot?.wakeReason);
+  if (
+    wakeReason === "execution_review_requested" ||
+    wakeReason === "execution_approval_requested" ||
+    wakeReason === "execution_changes_requested"
+  ) {
+    return true;
+  }
+
   const wakeSource = readNonEmptyString(contextSnapshot?.wakeSource);
   if (wakeSource === "timer") return true;
   return false;
@@ -1404,6 +1413,11 @@ function describeSessionResetReason(
   contextSnapshot: Record<string, unknown> | null | undefined,
 ) {
   if (contextSnapshot?.forceFreshSession === true) return "forceFreshSession was requested";
+
+  const wakeReason = readNonEmptyString(contextSnapshot?.wakeReason);
+  if (wakeReason === "execution_review_requested") return "wake reason is execution_review_requested";
+  if (wakeReason === "execution_approval_requested") return "wake reason is execution_approval_requested";
+  if (wakeReason === "execution_changes_requested") return "wake reason is execution_changes_requested";
 
   const wakeSource = readNonEmptyString(contextSnapshot?.wakeSource);
   if (wakeSource === "timer") return "wake source is timer (fresh session per timer heartbeat)";
@@ -7096,10 +7110,15 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
             normalizeAgentNameKey(executionAgent?.name);
           const isSameExecutionAgent =
             Boolean(executionAgentNameKey) && executionAgentNameKey === agentNameKey;
+          const wakeIsFollowupEligible = shouldQueueFollowupForRunningIssueWake({
+            contextSnapshot: enrichedContextSnapshot,
+            wakeCommentId,
+          });
           const runTooRecentForFollowup =
+            !wakeIsFollowupEligible &&
             (Date.now() - new Date(activeExecutionRun.createdAt).getTime()) < FOLLOWUP_DEDUP_WINDOW_MS;
           const shouldQueueFollowupForRunningWake =
-            shouldQueueFollowupForRunningIssueWake({ contextSnapshot: enrichedContextSnapshot, wakeCommentId }) &&
+            wakeIsFollowupEligible &&
             activeExecutionRun.status === "running" &&
             isSameExecutionAgent &&
             !runTooRecentForFollowup;
@@ -7287,13 +7306,19 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
     const sameScopeRunningRun = activeRuns.find(
       (candidate) => candidate.status === "running" && isSameTaskScope(runTaskKey(candidate), taskKey),
     );
-    const runTooRecentForFollowup = sameScopeRunningRun &&
-      (Date.now() - new Date(sameScopeRunningRun.createdAt).getTime()) < FOLLOWUP_DEDUP_WINDOW_MS;
+    const wakeIsFollowupEligible = shouldQueueFollowupForRunningIssueWake({
+      contextSnapshot: enrichedContextSnapshot,
+      wakeCommentId,
+    });
+    const runTooRecentForFollowup =
+      Boolean(sameScopeRunningRun) &&
+      !wakeIsFollowupEligible &&
+      (Date.now() - new Date(sameScopeRunningRun!.createdAt).getTime()) < FOLLOWUP_DEDUP_WINDOW_MS;
     const shouldQueueFollowupForRunningWake =
       Boolean(sameScopeRunningRun) &&
       !sameScopeQueuedRun &&
       !runTooRecentForFollowup &&
-      shouldQueueFollowupForRunningIssueWake({ contextSnapshot: enrichedContextSnapshot, wakeCommentId });
+      wakeIsFollowupEligible;
 
     const coalescedTargetRun =
       sameScopeQueuedRun ??
@@ -7413,7 +7438,12 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
         .then((rows) => rows[0] ?? null);
 
       if (crossPathRun) {
+        const crossPathWakeIsFollowupEligible = shouldQueueFollowupForRunningIssueWake({
+          contextSnapshot: enrichedContextSnapshot,
+          wakeCommentId,
+        });
         const crossPathRunTooRecent =
+          !crossPathWakeIsFollowupEligible &&
           (Date.now() - new Date(crossPathRun.createdAt).getTime()) < FOLLOWUP_DEDUP_WINDOW_MS;
         const skipForCommentFollowup =
           crossPathRun.status === "running" && Boolean(wakeCommentId) && !crossPathRunTooRecent;
